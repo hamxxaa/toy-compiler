@@ -1,6 +1,7 @@
 # L={
 # <program> ::= <statement>+
-# <statement> ::= <definer> | <equalize> | <if_structure>
+# <statement> ::= <definer> | <equalize> | <if_structure> | <print>
+# <print> ::= "print" "(" <var> ")" ";"
 # <if_structure> ::= "if" <condition> "#" "(" <statement>+ ")" ";"
 # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
 # <definer>::= "var" <var> ";"
@@ -100,14 +101,16 @@ def parser(tokens):
 
 
 def parse_statement(tokens):
+    # <statement> ::= <definer> | <equalize> | <if_structure>
     if tokens[0][1] == "var":
         return (parse_definer(tokens), "")
     elif tokens[0][1] == "print":
         return ("", parse_printer(tokens))
     # elif tokens[0][1] == "if":
-        # return ("", parse_if_structure(tokens))
+    #   return ("", parse_if_structure(tokens))
     else:
         return ("", parse_equalizer(tokens))
+
 
 # def parse_if_structure(tokens):
 #     if tokens.pop(0)[1] != "if":
@@ -119,16 +122,18 @@ def parse_statement(tokens):
 #     if tokens[0][1] == "(":
 #         tokens.pop(0)
 #         code += parse_condition(tokens)
-    
+
 #     elif tokens[0][1] == ")":
 #         tokens.pop(0)
 #         if tokens.pop(0)[1] not in logical_operators:
 #             raise SyntaxError("Error, expected a logical operator ")
-        
+
 #     code += parse_expression(tokens)
 #     if tokens.pop(0)[1] !=
 
+
 def parse_printer(tokens):
+    # <print> ::= "print" "(" <var> ")" ";"
     if tokens.pop(0)[1] != "print":
         raise SyntaxError("Error, expected 'print' ")
     if tokens.pop(0)[1] != "(":
@@ -139,7 +144,7 @@ def parse_printer(tokens):
     if tokens.pop(0)[1] != ")":
         raise SyntaxError("Error, expected ')' ")
     if tokens.pop(0)[1] != ";":
-        raise SyntaxError("Error, expected ';' ")
+        raise SyntaxError("Error, expected ';' printer ")
     return (
         "mov eax, dword ["
         + name
@@ -148,6 +153,7 @@ def parse_printer(tokens):
 
 
 def parse_definer(tokens):
+    # <definer>::= "var" <var> ";"
     global variables
 
     if tokens.pop(0)[1] != "var":
@@ -157,11 +163,12 @@ def parse_definer(tokens):
     name = tokens.pop(0)[1]
     variables.append(name)
     if tokens.pop(0)[1] != ";":
-        raise SyntaxError("Error, expected ';' ")
+        raise SyntaxError("Error, expected ';' definer ")
     return "" + name + " dd 0 \n"
 
 
 def parse_equalizer(tokens):
+    # <equalize>::= <var> "=" <expression> ";"
     global variables
 
     if tokens[0][0] != "IDENTIFIER":
@@ -173,39 +180,45 @@ def parse_equalizer(tokens):
         raise SyntaxError("Error, expected '=' ")
     code = parse_expression(tokens)
     if tokens.pop(0)[1] != ";":
-        raise SyntaxError("Error, expected ';' ")
-    return code + "mov [" + name + "], eax \n"
+        raise SyntaxError("Error, expected ';' equalizer ")
+    return code + "pop eax \nmov [" + name + "], eax \n"
 
 
 def parse_expression(tokens):
+    # <expression> ::= <term> (("+" | "-") <term>)*
     code = parse_term(tokens)
     while tokens and tokens[0][1] in ["+", "-"]:
         operator = tokens.pop(0)[1]
         term_code = parse_term(tokens)
-        code += "mov ebx, eax \n"
         code += term_code
+        code += "pop eax \npop ebx\n"
         if operator == "+":
             code += "add eax, ebx \n"
         else:
             code += "sub eax, ebx \n"
+        code += "push eax\n"
     return code
 
 
 def parse_term(tokens):
+    # <term> ::= <factor> (("*" | "/") <factor>)*
     code = parse_factor(tokens)
     while tokens and tokens[0][1] in ["*", "/"]:
         operator = tokens.pop(0)[1]
         factor_code = parse_factor(tokens)
-        code += "mov ebx, eax \n"
         code += factor_code
         if operator == "*":
+            code += "pop eax \npop ebx\n"
             code += "imul eax, ebx \n"
         else:
-            code += "idiv eax, ebx \n"
+            code += "pop ebx \npop eax\n"
+            code += "cdq \nidiv ebx \n"
+        code += "push eax\n"
     return code
 
 
 def parse_factor(tokens):
+    # <factor> ::= <var> | <signed_number> | "(" <expression> ")"
     if tokens[0][1] == "(":
         tokens.pop(0)
         code = parse_expression(tokens)
@@ -213,11 +226,11 @@ def parse_factor(tokens):
             raise SyntaxError("Error, expected ')' ")
         return code
     elif tokens[0][0] == "NUMBER":
-        return "mov eax, " + tokens.pop(0)[1] + " \n"
+        return "mov eax, " + tokens.pop(0)[1] + " \npush eax \n"
     elif tokens[0][0] == "IDENTIFIER":
-        return "mov eax, [" + tokens.pop(0)[1] + "] \n"
+        return "mov eax, [" + tokens.pop(0)[1] + "] \npush eax \n"
     elif tokens[0][0] == "SIGNED_NUMBER":
-        return "mov eax, " + tokens.pop(0)[1] + " \n"
+        return "mov eax, " + tokens.pop(0)[1] + " \npush eax \n"
     else:
         raise SyntaxError("Error, expected number or identifier")
 
