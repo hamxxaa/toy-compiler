@@ -1,9 +1,9 @@
 # L={
 # <program> ::= <statement>+
 # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure>
-# <while_structure> ::= "while" <condition> "#" "(" <statement>+ ")" ";"
+# <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")" ";"
 # <print> ::= "print" "(" <var> ")" ";"
-# <if_structure> ::= "if" <condition> "#" "(" <statement>+ ")" ";"
+# <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")" ";"
 # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
 # <definer>::= "var" <var> ";"
 # <var>::= <letter>+
@@ -25,7 +25,8 @@ from CodeGenerator import CodeGenerator
 from TokenHelper import TokenHelper
 
 
-keywords = ["while", "print", "var", ";", "(", ")", "=", "if", "#"]
+keywords = ["while", "print", "var", "if", "do"]
+symbols = [";", "(", ")", "="]
 operators = ["+", "-", "*", "/"]
 logical_operators = ["&", "|"]
 conditional_operators = ["<", ">", "==", "<=", ">=", "!="]
@@ -43,9 +44,11 @@ def tokenize(input_str):
                 col = 1
             i += 1
             col += 1
-        elif input_str[i].isalpha() or input_str[i] in keywords:
+        elif input_str[i].isalpha():
             lexeme = ""
-            while i < len(input_str) and not input_str[i].isspace():
+            while i < len(input_str) and (
+                input_str[i].isalpha() or input_str[i].isdigit() or input_str[i] == "_"
+            ):
                 lexeme += input_str[i]
                 i += 1
                 col += 1
@@ -53,6 +56,10 @@ def tokenize(input_str):
                 tokens.append(("KEYWORD", lexeme, row, col - len(lexeme)))
             else:
                 tokens.append(("IDENTIFIER", lexeme, row, col - len(lexeme)))
+        elif input_str[i] in symbols:
+            tokens.append(("SYMBOL", input_str[i], row, col))
+            i += 1
+            col += 1
         elif input_str[i].isdigit():
             lexeme = ""
             while i < len(input_str) and input_str[i].isdigit():
@@ -77,10 +84,13 @@ def tokenize(input_str):
             else:
                 if lexeme == "=" and input_str[i] == "=":
                     lexeme = "=="
-                if lexeme == "<" and input_str[i] == "=":
+                elif lexeme == "<" and input_str[i] == "=":
                     lexeme = "<="
-                if lexeme == ">" and input_str[i] == "=":
+                elif lexeme == ">" and input_str[i] == "=":
                     lexeme = ">="
+                else:
+                    i -= 1
+                    col -= 1
                 i += 1
                 col += 1
                 tokens.append(("OPERATOR", lexeme, row, col - len(lexeme)))
@@ -146,13 +156,13 @@ def parse_statement(tokens, cg):
 
 
 def parse_while_structure(tokens, cg):
-    # <while_structure> ::= "while" <condition> "#" "(" <statement>+ ")" ";"
+    # <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")" ";"
     tokens.consume("while")
     testlabel = cg.create_unique_label()
     label = cg.create_unique_label()
     cg.start_label(testlabel)
     parse_condition(tokens, cg)
-    tokens.consume("#")
+    tokens.consume("do")
     cg.prepare_condition_jump()
     cg.jumpIfZero(label)
     tokens.consume("(")
@@ -165,10 +175,10 @@ def parse_while_structure(tokens, cg):
 
 
 def parse_if_structure(tokens, cg):
-    # <if_structure> ::= "if" <condition> "#" "(" <statement>+ ")" ";"
+    # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")" ";"
     tokens.consume("if")
     parse_condition(tokens, cg)
-    tokens.consume("#")
+    tokens.consume("do")
     cg.prepare_condition_jump()
     label = cg.create_unique_label()
     cg.jumpIfZero(label)
@@ -206,7 +216,7 @@ def parse_condition(tokens, cg):
         tokens.consume("(")
         logic(tokens, cg)
         tokens.consume(")")
-        tokens.check_in_without_consuming(logical_operators + ["#"])
+        tokens.check_in_without_consuming(logical_operators + ["do"])
         while tokens.peek()[1] in logical_operators:
             operator = tokens.consume()[1]
             tokens.consume("(")
@@ -304,7 +314,7 @@ def parse_factor(tokens, cg):
 with open("code.txt", "r") as raw_code:
     code_string = raw_code.read()
 
-# print(tokenize(code_string))
+print(tokenize(code_string))
 tokens = TokenHelper(tokenize(code_string))
 cg = CodeGenerator()
 code = parser(tokens, cg)
