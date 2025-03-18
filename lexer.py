@@ -1,6 +1,7 @@
 # L={
 # <program> ::= <statement>+
-# <statement> ::= <definer> | <equalize> | <if_structure> | <print>
+# <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure>
+# <while_structure> ::= "while" <condition> "#" "(" <statement>+ ")" ";"
 # <print> ::= "print" "(" <var> ")" ";"
 # <if_structure> ::= "if" <condition> "#" "(" <statement>+ ")" ";"
 # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
@@ -24,7 +25,7 @@ from CodeGenerator import CodeGenerator
 from TokenHelper import TokenHelper
 
 
-keywords = ["print", "var", ";", "(", ")", "=", "if", "#"]
+keywords = ["while", "print", "var", ";", "(", ")", "=", "if", "#"]
 operators = ["+", "-", "*", "/"]
 logical_operators = ["&", "|"]
 conditional_operators = ["<", ">", "==", "<=", ">=", "!="]
@@ -138,8 +139,29 @@ def parse_statement(tokens, cg):
         return ("", parse_printer(tokens, cg))
     elif tokens.peek()[1] == "if":
         return ("", parse_if_structure(tokens, cg))
+    elif tokens.peek()[1] == "while":
+        return ("", parse_while_structure(tokens, cg))
     else:
         return ("", parse_equalizer(tokens, cg))
+
+
+def parse_while_structure(tokens, cg):
+    # <while_structure> ::= "while" <condition> "#" "(" <statement>+ ")" ";"
+    tokens.consume("while")
+    testlabel = cg.create_unique_label()
+    label = cg.create_unique_label()
+    cg.start_label(testlabel)
+    parse_condition(tokens, cg)
+    tokens.consume("#")
+    cg.prepare_condition_jump()
+    cg.jumpIfZero(label)
+    tokens.consume("(")
+    while tokens.peek()[1] != ")":
+        parse_statement(tokens, cg)[1]
+    tokens.consume(")")
+    cg.jump(testlabel)
+    cg.start_label(label)
+    return
 
 
 def parse_if_structure(tokens, cg):
@@ -149,6 +171,7 @@ def parse_if_structure(tokens, cg):
     tokens.consume("#")
     cg.prepare_condition_jump()
     label = cg.create_unique_label()
+    cg.jumpIfZero(label)
     tokens.consume("(")
     while tokens.peek()[1] != ")":
         parse_statement(tokens, cg)[1]

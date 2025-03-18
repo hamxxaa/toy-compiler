@@ -81,8 +81,16 @@ class CodeGenerator:
     def create_unique_label(self):
         label = f"label{self.label_count}"
         self.label_count += 1
-        self.code += f"jz {label}\n"
         return label
+    
+    def jumpIfZero(self, label):
+        self.code += f"jz {label}\n"
+    
+    def jumpIfNotZero(self, label):
+        self.code += f"jnz {label}\n"
+
+    def jump(self, label):
+        self.code += f"jmp {label}\n"
 
     def division(self):
         second_register = self.get_register_from_stack()
