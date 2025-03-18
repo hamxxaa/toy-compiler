@@ -3,3 +3,6 @@ my_program
 program
 temp.asm
 temp.o
+parse_tree.txt
+parsetree.py
+__pycache__

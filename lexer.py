@@ -20,75 +20,8 @@
 # }
 
 import subprocess
-
-
-class TokenHelper:
-    def __init__(self, tokens):
-        self.tokens = tokens
-        self.position = 0
-
-    def peek(self):
-        if self.position < len(self.tokens):
-            return self.tokens[self.position]
-        return None
-
-    def consume(self, expected_value=None, expected_type=None):
-        if self.position >= len(self.tokens):
-            raise SyntaxError(f"Error, expected '{expected_value}' but found none")
-        token = self.tokens[self.position]
-        if expected_value and token[1] != expected_value:
-            raise SyntaxError(
-                f"Error, expected '{expected_value}' but found '{token[1]}' at row {token[2]}, column {token[3]}"
-            )
-        if expected_type and token[0] != expected_type:
-            raise SyntaxError(
-                f"Error, expected {expected_type} but found {token[0]} at row {token[2]}, column {token[3]}"
-            )
-        self.position += 1
-        return token
-
-    def consume_in(self, valid_values, expected_type=None):
-        if self.position >= len(self.tokens):
-            raise SyntaxError(f"Error, expected one of {valid_values} but found none")
-        token = self.tokens[self.position]
-        if token[1] not in valid_values:
-            raise SyntaxError(
-                f"Error, expected one of {valid_values} but found '{token[1]}' at row {token[2]}, column {token[3]}"
-            )
-        if expected_type and token[0] != expected_type:
-            raise SyntaxError(
-                f"Error, expected {expected_type} but found {token[0]} at row {token[2]}, column {token[3]}"
-            )
-        self.position += 1
-        return token
-
-    def check_without_consuming(self, expected_value=None, expected_type=None):
-        if self.position >= len(self.tokens):
-            raise SyntaxError(f"Error, expected '{expected_value}' but found none")
-        token = self.tokens[self.position]
-        if expected_value and token[1] != expected_value:
-            raise SyntaxError(
-                f"Error, expected '{expected_value}' but found '{token[1]}' at row {token[2]}, column {token[3]}"
-            )
-        if expected_type and token[0] != expected_type:
-            raise SyntaxError(
-                f"Error, expected {expected_type} but found {token[0]} at row {token[2]}, column {token[3]}"
-            )
-        return token
-
-    def check_in_without_consuming(self, valid_values, expected_type=None):
-        if self.position >= len(self.tokens):
-            raise SyntaxError(f"Error, expected one of {valid_values} but found none")
-        token = self.tokens[self.position]
-        if token[1] not in valid_values:
-            raise SyntaxError(
-                f"Error, expected one of {valid_values} but found '{token[1]}' at row {token[2]}, column {token[3]}"
-            )
-        if expected_type and token[0] != expected_type:
-            raise SyntaxError(
-                f"Error, expected {expected_type} but found {token[0]} at row {token[2]}, column {token[3]}"
-            )
-        return token
+from CodeGenerator import CodeGenerator
+from TokenHelper import TokenHelper
 
 
 keywords = ["print", "var", ";", "(", ")", "=", "if", "#"]
@@ -165,16 +98,15 @@ def tokenize(input_str):
 variables = []
 
 
-def parser(tokens):
+def parser(tokens, cg):
     program = []
     while tokens.peek():
-        program.append(parse_statement(tokens))
+        program.append(parse_statement(tokens, cg))
 
     code = "section .data \n"
     code += "msg db 'code executed successfully', 0xA \n"
     code += "msglen equ $ - msg \n"
-    for statement in program:
-        code += statement[0]
+    code += cg.data
 
     code += "section .bss \nextern num \n"
 
@@ -183,8 +115,7 @@ def parser(tokens):
 
     code += "_start: \n"
 
-    for statement in program:
-        code += statement[1]
+    code += cg.code
 
     code += "mov eax, 4 \n"
     code += "mov ebx, 1 \n"
@@ -199,190 +130,144 @@ def parser(tokens):
     return code
 
 
-def parse_statement(tokens):
+def parse_statement(tokens, cg):
     # <statement> ::= <definer> | <equalize> | <if_structure> | <print>
     if tokens.peek()[1] == "var":
-        return (parse_definer(tokens), "")
+        return (parse_definer(tokens, cg), "")
     elif tokens.peek()[1] == "print":
-        return ("", parse_printer(tokens))
+        return ("", parse_printer(tokens, cg))
     elif tokens.peek()[1] == "if":
-        return ("", parse_if_structure(tokens))
+        return ("", parse_if_structure(tokens, cg))
     else:
-        return ("", parse_equalizer(tokens))
+        return ("", parse_equalizer(tokens, cg))
 
 
-def parse_if_structure(tokens):
+def parse_if_structure(tokens, cg):
     # <if_structure> ::= "if" <condition> "#" "(" <statement>+ ")" ";"
     tokens.consume("if")
-    code = parse_condition(tokens)
+    parse_condition(tokens, cg)
     tokens.consume("#")
-    unique_label = "label" + str(hash(str(tokens.peek()))).replace("-", "")
-    code += "pop eax \ntest eax, eax \njz " + unique_label + " \n"
+    cg.prepare_condition_jump()
+    label = cg.create_unique_label()
     tokens.consume("(")
     while tokens.peek()[1] != ")":
-        code += parse_statement(tokens)[1]
+        parse_statement(tokens, cg)[1]
     tokens.consume(")")
-    code += "" + unique_label + ": \n"
-    return code
+    cg.start_label(label)
+    return
 
 
-def parse_condition(tokens):
+def parse_condition(tokens, cg):
     # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
-    def logic(tokens):
-        code = parse_expression(tokens)
+    def logic(tokens, cg):
+        parse_expression(tokens, cg)
         operator = tokens.consume_in(conditional_operators)[1]
-        code += parse_expression(tokens)
-        code += "pop ebx \npop eax \ncmp eax,ebx \n"
+        parse_expression(tokens, cg)
+        cg.apply_binary_operation("cmp")
         if operator == "<":
-            code += "setl al \n"
+            cg.add_to_code("setl al \n")
         elif operator == ">":
-            code += "setg al \n"
+            cg.add_to_code("setg al \n")
         elif operator == "==":
-            code += "sete al \n"
+            cg.add_to_code("sete al \n")
         elif operator == "<=":
-            code += "setle al \n"
+            cg.add_to_code("setle al \n")
         elif operator == ">=":
-            code += "setge al \n"
+            cg.add_to_code("setge al \n")
         elif operator == "!=":
-            code += "setne al \n"
-        code += "movzx eax, al \npush eax \n"
-        return code
+            cg.add_to_code("setne al \n")
+        cg.extend_al_register()
+        return
 
     if tokens.peek()[1] == "(":
         tokens.consume("(")
-        code = logic(tokens)
+        logic(tokens, cg)
         tokens.consume(")")
         tokens.check_in_without_consuming(logical_operators + ["#"])
         while tokens.peek()[1] in logical_operators:
             operator = tokens.consume()[1]
             tokens.consume("(")
-            code += logic(tokens)
+            logic(tokens, cg)
             tokens.consume(")")
-            code += "pop ebx \npop eax \n"
             if operator == "&":
-                code += "and eax, ebx \n"
+                cg.apply_binary_operation("and")
             elif operator == "|":
-                code += "or eax, ebx \n"
-            code += "push eax \n"
-        return code
+                cg.apply_binary_operation("or")
+        return
     else:
-        return logic(tokens)
-
-    # code = parse_expression(tokens)
-    # if tokens[0][1] not in conditional_operators:
-    #     raise SyntaxError("Error, expected a conditional operator "row: "
-    #         + str(tokens[0][2])
-    #         + " column: "
-    #         + str(tokens[0][3]))
-    # # operator = tokens.pop(0)[1]
-    # # code += parse_expression(tokens)
-    # # code += "pop eax \npop ebx \ncmp eax,ebx \n"
-    # if operator == "<":
-    #     code += "jge fail \n"
-    # elif operator == ">":
-    #     code += "jle fail \n"
-    # elif operator == "==":
-    #     code += "jne fail \n"
-    # elif operator == "<=":
-    #     code += "jg fail \n"
-    # elif operator == ">=":
-    #     code += "jl fail \n"
-    # elif operator == "!=":
-    #     code += "je fail\n"
-    # return code
+        return logic(tokens, cg)
 
 
-def parse_printer(tokens):
+def parse_printer(tokens, cg):
     # <print> ::= "print" "(" <var> ")" ";"
     tokens.consume("print")
     tokens.consume("(")
-    name = tokens.consume(expected_type="IDENTIFIER")[1]
+    name = tokens.check_next_var()[1]
     tokens.consume(")")
     tokens.consume(";")
-    return (
-        "mov eax, dword ["
-        + name
-        + "] \nmov dword [num], eax \ncall print_integer \nmov eax, 4 \nmov ebx, 1 \nmov ecx, newline \nmov edx, 1 \nint 0x80\n"
-    )
+    cg.print(name)
 
 
-def parse_definer(tokens):
+def parse_definer(tokens, cg):
     # <definer>::= "var" <var> ";"
-    global variables
-
     tokens.consume("var")
-    name = tokens.consume(expected_type="IDENTIFIER")[1]
-    variables.append(name)
+    name = tokens.consume()[1]
+    tokens.variables.append(name)
     tokens.consume(";")
-    return "" + name + " dd 0 \n"
+    cg.define(name)
 
 
-def parse_equalizer(tokens):
+def parse_equalizer(tokens, cg):
     # <equalize>::= <var> "=" <expression> ";"
-    global variables
-
-    name = tokens.consume(expected_type="IDENTIFIER")[1]
-    if name not in variables:
-        raise SyntaxError(
-            "Error, variable "
-            + name
-            + " not defined row: "
-            + str(tokens.peek()[2])
-            + " column: "
-            + str(tokens.peek()[3])
-        )
+    name = tokens.check_next_var()[1]
     tokens.consume("=")
-    code = parse_expression(tokens)
+    parse_expression(tokens, cg)
     tokens.consume(";")
-    return code + "pop eax \nmov [" + name + "], eax \n"
+    cg.equalize(name)
 
 
-def parse_expression(tokens):
+def parse_expression(tokens, cg):
     # <expression> ::= <term> (("+" | "-") <term>)*
-    code = parse_term(tokens)
+    parse_term(tokens, cg)
 
     while tokens.peek()[1] in ["+", "-"]:
         operator = tokens.consume()[1]
-        term_code = parse_term(tokens)
-        code += term_code
-        code += "pop eax \npop ebx\n"
+        parse_term(tokens, cg)
         if operator == "+":
-            code += "add eax, ebx \n"
+            cg.apply_binary_operation("add")
         else:
-            code += "sub eax, ebx \n"
-        code += "push eax\n"
-    return code
+            cg.apply_binary_operation("sub")
+    return
 
 
-def parse_term(tokens):
+def parse_term(tokens, cg):
     # <term> ::= <factor> (("*" | "/") <factor>)*
-    code = parse_factor(tokens)
+    parse_factor(tokens, cg)
     while tokens.peek()[1] in ["*", "/"]:
         operator = tokens.consume()[1]
-        factor_code = parse_factor(tokens)
-        code += factor_code
+        parse_factor(tokens, cg)
         if operator == "*":
-            code += "pop eax \npop ebx\n"
-            code += "imul eax, ebx \n"
+            cg.apply_binary_operation("imul")
         else:
-            code += "pop ebx \npop eax\n"
-            code += "cdq \nidiv ebx \n"
-        code += "push eax\n"
-    return code
+            cg.division()
+    return
 
 
-def parse_factor(tokens):
+def parse_factor(tokens, cg):
     # <factor> ::= <var> | <signed_number> | "(" <expression> ")"
     if tokens.peek()[1] == "(":
         tokens.consume("(")
-        code = parse_expression(tokens)
+        code = parse_expression(tokens, cg)
         tokens.consume(")")
         return code
     elif tokens.peek()[0] == "NUMBER":
-        return "mov eax, " + tokens.consume()[1] + " \npush eax \n"
+        cg.load_value_to(val=tokens.consume()[1])
+        return
     elif tokens.peek()[0] == "IDENTIFIER":
-        return "mov eax, [" + tokens.consume()[1] + "] \npush eax \n"
+        cg.load_value_to(var=tokens.check_next_var()[1])
+        return
     elif tokens.peek()[0] == "SIGNED_NUMBER":
+        cg.load_value_to(val=tokens.consume()[1])
         return "mov eax, " + tokens.consume()[1] + " \npush eax \n"
     else:
         raise SyntaxError(
@@ -396,9 +281,10 @@ def parse_factor(tokens):
 with open("code.txt", "r") as raw_code:
     code_string = raw_code.read()
 
-print(tokenize(code_string))
+# print(tokenize(code_string))
 tokens = TokenHelper(tokenize(code_string))
-code = parser(tokens)
+cg = CodeGenerator()
+code = parser(tokens, cg)
 
 with open("temp.asm", "w") as f:
     f.write(code)
