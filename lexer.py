@@ -1,11 +1,11 @@
 # L={
 # <program> ::= <statement>+
 # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure>
-# <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")" ";"
+# <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")"
 # <print> ::= "print" "(" <var> ")" ";"
-# <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")" ";"
+# <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
 # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
-# <definer>::= "var" <var> ";"
+# <definer>::= ( "var" <var> ";" ) | ( "var" <var> "=" <expression> ";" )
 # <var>::= <letter>+
 # <number>::= <digit>+
 # <signed_number>::? <number>|"-" <number>
@@ -23,91 +23,32 @@
 import subprocess
 from CodeGenerator import CodeGenerator
 from TokenHelper import TokenHelper
+from Tokenizer import Tokenizer
 
-
-keywords = ["while", "print", "var", "if", "do"]
-symbols = [";", "(", ")", "="]
-operators = ["+", "-", "*", "/"]
 logical_operators = ["&", "|"]
 conditional_operators = ["<", ">", "==", "<=", ">=", "!="]
 
+def create_tokenizer():
+    tokenizer = Tokenizer()
+    
+    tokenizer.add_skip_pattern("( |\t|\n)+")
+    
+    tokenizer.add_pattern("TWO_CHAR_OP", "(==|<=|>=|!=)", priority=10)
+    tokenizer.add_pattern("KEYWORD", "(while|print|var|if|do)", priority=5)
+    tokenizer.add_pattern("IDENTIFIER", "([a-z]|[A-Z])([a-z]|[A-Z]|[0-9]|_)*", priority=4)
+    tokenizer.add_pattern("SIGNED_NUMBER", "-[0-9]+", priority=6)
+    tokenizer.add_pattern("NUMBER", "[0-9]+", priority=3)
+    tokenizer.add_pattern("SYMBOL", "(;|\\(|\\)|=)", priority=2)
+    tokenizer.add_pattern("OPERATOR", "(\\+|-|\\*|/|&|\\||<|>)", priority=1)
+    
+    return tokenizer
 
 def tokenize(input_str):
-    tokens = []
-    i = 0
-    row = 1
-    col = 1
-    while i < len(input_str):
-        if input_str[i].isspace():
-            if input_str[i] == "\n":
-                row += 1
-                col = 1
-            i += 1
-            col += 1
-        elif input_str[i].isalpha():
-            lexeme = ""
-            while i < len(input_str) and (
-                input_str[i].isalpha() or input_str[i].isdigit() or input_str[i] == "_"
-            ):
-                lexeme += input_str[i]
-                i += 1
-                col += 1
-            if lexeme in keywords:
-                tokens.append(("KEYWORD", lexeme, row, col - len(lexeme)))
-            else:
-                tokens.append(("IDENTIFIER", lexeme, row, col - len(lexeme)))
-        elif input_str[i] in symbols:
-            tokens.append(("SYMBOL", input_str[i], row, col))
-            i += 1
-            col += 1
-        elif input_str[i].isdigit():
-            lexeme = ""
-            while i < len(input_str) and input_str[i].isdigit():
-                lexeme += input_str[i]
-                i += 1
-                col += 1
-            tokens.append(("NUMBER", lexeme, row, col - len(lexeme)))
-        elif (
-            input_str[i] in operators
-            or input_str[i] in logical_operators
-            or input_str[i] in conditional_operators
-        ):
-            lexeme = input_str[i]
-            i += 1
-            col += 1
-            if lexeme == "-" and input_str[i].isdigit():
-                while i < len(input_str) and input_str[i].isdigit():
-                    lexeme += input_str[i]
-                    i += 1
-                    col += 1
-                tokens.append(("SIGNED_NUMBER", lexeme, row, col - len(lexeme)))
-            else:
-                if lexeme == "=" and input_str[i] == "=":
-                    lexeme = "=="
-                elif lexeme == "<" and input_str[i] == "=":
-                    lexeme = "<="
-                elif lexeme == ">" and input_str[i] == "=":
-                    lexeme = ">="
-                else:
-                    i -= 1
-                    col -= 1
-                i += 1
-                col += 1
-                tokens.append(("OPERATOR", lexeme, row, col - len(lexeme)))
-        else:
-            raise SyntaxError(
-                "Invalid character found: "
-                + input_str[i]
-                + " row: "
-                + str(row)
-                + " column: "
-                + str(col)
-            )
+    tokenizer = create_tokenizer()
+    tokens = tokenizer.tokenize(input_str)
     return tokens
 
-
 variables = []
-
 
 def parser(tokens, cg):
     program = []
@@ -156,7 +97,7 @@ def parse_statement(tokens, cg):
 
 
 def parse_while_structure(tokens, cg):
-    # <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")" ";"
+    # <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")"
     tokens.consume("while")
     testlabel = cg.create_unique_label()
     label = cg.create_unique_label()
@@ -175,7 +116,7 @@ def parse_while_structure(tokens, cg):
 
 
 def parse_if_structure(tokens, cg):
-    # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")" ";"
+    # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
     tokens.consume("if")
     parse_condition(tokens, cg)
     tokens.consume("do")
@@ -242,12 +183,18 @@ def parse_printer(tokens, cg):
 
 
 def parse_definer(tokens, cg):
-    # <definer>::= "var" <var> ";"
+    # <definer>::= ( "var" <var> ";" ) | ( "var" <var> "=" <expression> ";" )
     tokens.consume("var")
     name = tokens.consume()[1]
     tokens.variables.append(name)
-    tokens.consume(";")
-    cg.define(name)
+    if tokens.peek()[1] == "=":
+        tokens.consume("=")
+        parse_expression(tokens, cg)
+        cg.define(name, True)
+        tokens.consume(";")
+    else:
+        tokens.consume(";")
+        cg.define(name)
 
 
 def parse_equalizer(tokens, cg):

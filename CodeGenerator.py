@@ -74,9 +74,10 @@ class CodeGenerator:
             return
 
         self.code += f"{operation} {first_register}, {second_register}\n"
-        self.outer_stack.append([first_register, None])
-        self.used_registers.add(first_register)
-        self.stack_size += 1
+        if operation != "cmp":
+            self.outer_stack.append([first_register, None])
+            self.used_registers.add(first_register)
+            self.stack_size += 1
 
     def create_unique_label(self):
         label = f"label{self.label_count}"
@@ -187,8 +188,10 @@ class CodeGenerator:
     def print(self, name):
         self.code += f"mov eax, dword [{name}] \nmov dword [num], eax \ncall print_integer \nmov eax, 4 \nmov ebx, 1 \nmov ecx, newline \nmov edx, 1 \nint 0x80\n"
 
-    def define(self, name):
+    def define(self, name, got_initial_value = False):
         self.data += name + " dd 0 \n"
+        if got_initial_value:
+            self.equalize(name)
 
     def equalize(self, name):
         reg = self.get_register_from_stack()
