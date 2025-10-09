@@ -1,200 +1,113 @@
+from AsmGenerator import AsmGenerator
+
+
 class CodeGenerator:
     def __init__(self):
-        self.available_registers = [
-            "eax",
-            "ebx",
-            "ecx",
-            "edx",
-            "edi",
-        ]  # esi reserved for stack management
-        self.used_registers = set()
-        self.outer_stack = []
-        self.stack_size = 0
-        self.data = ""
-        self.code = ""
-        self.label_count = 0
+        self.asm_generator = AsmGenerator()
 
-    def get_free_register(self):
-        for register in self.available_registers:
-            if register not in self.used_registers:
-                self.used_registers.add(register)
-                return register
-        return None
+    def generate(self, node):
+        method_name = f"visit_{type(node).__name__}"
+        visitor = getattr(self, method_name, self.generic_visit)
+        return visitor(node)
 
-    def load_value_to(self, val=None, var=None):
-        register = self.get_free_register()
-        if register:
-            if val:
-                self.code += f"mov {register}, {str(val)}\n"
-                self.outer_stack.append([register, val])
-                self.used_registers.add(register)
+    def generic_visit(self, node):
+        raise Exception(f"No visit_{type(node).__name__} method")
+
+    def visit_ProgramNode(self, node):
+        for statement in node.statements:
+            self.generate(statement)
+
+    def visit_DefinerNode(self, node):
+        if node.value:
+            self.generate(node.value)
+            self.asm_generator.define(node.var_name, True)
+        else:
+            self.asm_generator.define(node.var_name, False)
+
+    def visit_EqualizeNode(self, node):
+        self.generate(node.value)
+        self.asm_generator.equalize(node.var_name)
+
+    def visit_IfNode(self, node):
+        self.generate(node.condition)
+        self.asm_generator.prepare_condition_jump()
+        end_label = self.asm_generator.create_unique_label()
+        self.asm_generator.jumpIfZero(end_label)
+        for statement in node.statements:
+            self.generate(statement)
+        self.asm_generator.start_label(end_label)
+
+    def visit_WhileNode(self, node):
+        start_label = self.asm_generator.create_unique_label()
+        end_label = self.asm_generator.create_unique_label()
+        self.asm_generator.start_label(start_label)
+        self.generate(node.condition)
+        self.asm_generator.prepare_condition_jump()
+        self.asm_generator.jumpIfZero(end_label)
+        for statement in node.statements:
+            self.generate(statement)
+        self.asm_generator.jump(start_label)
+        self.asm_generator.start_label(end_label)
+
+    def visit_PrintNode(self, node):
+        self.asm_generator.print(node.var_name)
+
+    def visit_ConditionNode(self, node):
+        if node.operator in ("&", "|"):
+            self.generate(node.left)
+            self.generate(node.right)
+            if node.operator == "&":
+                self.asm_generator.apply_binary_operation("and")
             else:
-                self.code += f"mov {register}, [{var}]\n"
-                self.outer_stack.append([register, var])
-                self.used_registers.add(register)
-
+                self.asm_generator.apply_binary_operation("or")
         else:
-            if val:
-                self.code += f"mov esi, {str(val)}\n"
-                self.code += f"push esi\n"
-                self.outer_stack.append(["stack", val])
-            else:
-                self.code += f"mov esi, [{var}]\n"
-                self.code += f"push esi\n"
-                self.outer_stack.append(["stack", var])
-        self.stack_size += 1
+            self.generate(node.left)
+            self.generate(node.right)
+            self.asm_generator.apply_cmp(node.operator)
 
-    def get_register_from_stack(self):
-        if not self.outer_stack:
-            raise ValueError("Stack is empty")
-        register = self.outer_stack.pop()[0]
-        self.stack_size -= 1
+    def visit_ExpressionNode(self, node):
+        self.generate(node.left)
+        self.generate(node.right)
+        if node.operator == "+":
+            self.asm_generator.apply_binary_operation("add")
+        elif node.operator == "-":
+            self.asm_generator.apply_binary_operation("sub")
 
-        if register == "stack":
-            return "esi"
-        self.used_registers.remove(register)
-        return register
+    def visit_TermNode(self, node):
+        self.generate(node.left)
+        self.generate(node.right)
+        if node.operator == "*":
+            self.asm_generator.apply_binary_operation("imul")
+        elif node.operator == "/":
+            self.division()
 
-    def apply_binary_operation(self, operation):
-
-        second_register = self.get_register_from_stack()
-        first_register = self.get_register_from_stack()
-
-        if first_register == "esi" and second_register == "esi":
-            self.code += "pop esi\n"
-            self.code += "push eax\n"
-            self.code += "mov eax, [esp+4]\n"
-            self.code += f"{operation} eax, esi\n"
-            self.code += "mov esi, eax\n"
-            self.code += "pop eax\n"
-            self.code += "mov [esp], esi\n"
-            self.outer_stack.append(["stack", None])
-            self.stack_size += 1
-
-            return
-
-        self.code += f"{operation} {first_register}, {second_register}\n"
-        if operation != "cmp":
-            self.outer_stack.append([first_register, None])
-            self.used_registers.add(first_register)
-            self.stack_size += 1
-
-    def create_unique_label(self):
-        label = f"label{self.label_count}"
-        self.label_count += 1
-        return label
-    
-    def jumpIfZero(self, label):
-        self.code += f"jz {label}\n"
-    
-    def jumpIfNotZero(self, label):
-        self.code += f"jnz {label}\n"
-
-    def jump(self, label):
-        self.code += f"jmp {label}\n"
-
-    def division(self):
-        second_register = self.get_register_from_stack()
-        first_register = self.get_register_from_stack()
-
-        if first_register == "esi" and second_register == "esi":
-            self.code += "pop esi\n"
-            self.code += "push eax\n"
-            self.code += "push edx\n"
-            self.code += "mov eax, [esp+8]\n"
-            self.code += "cdq\n"
-            self.code += "idiv esi\n"
-            self.code += "mov esi, eax\n"
-            self.code += "pop edx\n"
-            self.code += "pop eax\n"
-            self.code += "mov [esp], esi\n"
-            self.outer_stack.append(["stack", None])
-
-        elif second_register == "esi" and first_register == "edi":
-            self.code += "pop esi\n"
-            self.code += "push eax\n"
-            self.code += "push edx\n"
-            self.code += f"mov eax, edi\n"
-            self.code += "cdq\n"
-            self.code += "idiv esi\n"
-            self.code += "mov esi, eax\n"
-            self.code += "pop edx\n"
-            self.code += "pop eax\n"
-            self.code += "mov edi, esi\n"
-            self.used_registers.add("edi")
-            self.outer_stack.append(["edi", None])
-
-        elif first_register == "edx":
-            self.code += "push eax\n"
-            self.code += "mov eax, edx\n"
-            self.code += "cdq\n"
-            self.code += f"idiv {second_register}\n"
-            self.code += "mov edx, eax\n"
-            self.code += "pop eax\n"
-            self.used_registers.add("edx")
-            self.outer_stack.append(["edx", None])
-
-        elif second_register == "edx":
-            self.code += "mov edi, eax\n"
-            self.code += "mov esi, edx\n"
-            self.code += f"mov eax, {first_register}\n"
-            self.code += "cdq\n"
-            self.code += "idiv esi\n"
-            self.code += "mov esi, eax\n"
-            self.code += "mov eax, edi\n"
-            self.code += f"mov {first_register}, esi\n"
-            self.used_registers.add(first_register)
-            self.outer_stack.append([first_register, None])
-
-        elif first_register == "eax":
-            self.code += "cdq\n"
-            self.code += f"idiv {second_register}\n"
-            self.used_registers.add("eax")
-            self.outer_stack.append(["eax", None])
-
+    def visit_FactorNode(self, node):
+        if node.is_variable:
+            self.asm_generator.load_value_to(var=node.value)
         else:
-            self.code += "mov edi, eax\n"
-            self.code += f"mov eax, {first_register}\n"
-            self.code += "cdq\n"
-            self.code += f"idiv {second_register}\n"
-            self.code += f"mov {first_register}, eax\n"
-            self.code += "mov eax, edi\n"
-            self.used_registers.add(first_register)
-            self.outer_stack.append([first_register, None])
+            self.asm_generator.load_value_to(val=node.value)
 
-    def start_label(self, label):
-        self.code += label + ":\n"
-
-    def extend_al_register(self):
-        reg = self.get_free_register()
-        if reg:
-            self.code += f"movzx {reg}, al\n"
-            self.used_registers.add(reg)
-            self.outer_stack.append([reg, None])
-        else:
-            self.code += f"movzx esi, al\n"
-            self.code += f"push esi\n"
-            self.outer_stack.append(["stack", None])
-
-    def prepare_condition_jump(self):
-        reg = self.get_register_from_stack()
-        if reg == "esi":
-            self.code += "pop esi\n"
-        self.code += f"test {reg}, {reg}\n"
-
-    def add_to_code(self, code):
-        self.code += code
-
-    def print(self, name):
-        self.code += f"mov eax, dword [{name}] \nmov dword [num], eax \ncall print_integer \nmov eax, 4 \nmov ebx, 1 \nmov ecx, newline \nmov edx, 1 \nint 0x80\n"
-
-    def define(self, name, got_initial_value = False):
-        self.data += name + " dd 0 \n"
-        if got_initial_value:
-            self.equalize(name)
-
-    def equalize(self, name):
-        reg = self.get_register_from_stack()
-        if reg == "esi":
-            self.code += "pop esi\n"
-        self.code += f"mov [{name}], {reg}\n"
+    def get_full_code(self, ast):
+        self.generate(ast)
+        full_code = (
+            "section .data \n"
+            + "msg db 'code executed successfully', 0xA \n"
+            + "msglen equ $ - msg \n"
+            + self.asm_generator.data
+            + "section .bss \nextern num \n"
+            + "section .text \n"
+            + "global _start \n"
+            + "_start: \n"
+            + self.asm_generator.code
+            + "mov eax, 4 \n"
+            + "mov ebx, 1 \n"
+            + "mov ecx, msg \n"
+            + "mov edx, msglen \n"
+            + "int 0x80 \n"
+            + "mov eax, 1 \n"
+            + "xor ebx, ebx \n"
+            + "int 0x80 \n"
+            + "extern print_integer \n"
+            + "extern newline \n"
+        )
+        return full_code
