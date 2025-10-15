@@ -1,5 +1,27 @@
-code.txt
-program
-temp.asm
-temp.o
-__pycache__
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Build directory
+build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Legacy files (şu an kullanılmayan)
+AsmGenerator.py
+CodeGenerator.py
+
+# Temporary files
+*.tmp
+*.bak

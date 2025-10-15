@@ -1,0 +1,196 @@
+import subprocess
+import argparse
+import sys
+import platform
+import os
+from lexer import Tokenizer
+from parser import Parser
+from codegen import TAC, TACGenerator
+from optimization import Optimizer
+from backend import X86Backend
+
+
+def create_tokenizer():
+    tokenizer = Tokenizer()
+
+    tokenizer.add_skip_pattern("( |\t|\n)+")
+
+    tokenizer.add_pattern("KEYWORD", "(while|print|var|if|do)", priority=5)
+    tokenizer.add_pattern(
+        "IDENTIFIER", "([a-z]|[A-Z])([a-z]|[A-Z]|[0-9]|_)*", priority=4
+    )
+    tokenizer.add_pattern("SIGNED_NUMBER", "-[0-9]+", priority=6)
+    tokenizer.add_pattern("NUMBER", "[0-9]+", priority=3)
+    tokenizer.add_pattern("SYMBOL", "(;|\\(|\\)|=)", priority=2)
+    tokenizer.add_pattern("OPERATOR", "(\\+|-|\\*|/)", priority=1)
+    tokenizer.add_pattern("CONDITIONAL_OPERATOR", "(<|>|==|<=|>=|!=)", priority=1)
+    tokenizer.add_pattern("LOGICAL_OPERATOR", "(&|\\|)", priority=1)
+
+    return tokenizer
+
+
+def tokenize(input_str):
+    tokenizer = create_tokenizer()
+    tokens = tokenizer.tokenize(input_str)
+    return tokens
+
+
+def get_os_commands():
+    """Detect operating system and return appropriate commands"""
+    system = platform.system().lower()
+
+    if system == "windows":
+        return {
+            "nasm": ["nasm", "-f", "win32"],
+            "linker": ["link", "/subsystem:console", "/entry:main"],
+            "executable_ext": ".exe",
+            "object_ext": ".obj",
+            "run_prefix": "",
+        }
+    else:  # Linux, macOS and other Unix-like systems
+        return {
+            "nasm": ["nasm", "-f", "elf32"],
+            "linker": ["ld", "-m", "elf_i386"],
+            "executable_ext": "",
+            "object_ext": ".o",
+            "run_prefix": "./",
+        }
+
+
+def compile_program(
+    input_file,
+    optimize=True,
+    output_file="program",
+    print_tokens=False,
+    print_ast=False,
+    print_tac=False,
+    print_optimized_tac=False,
+):
+    input_str = ""
+    try:
+        with open(input_file, "r") as raw_code:
+            input_str = raw_code.read()
+    except FileNotFoundError:
+        print(f"Error: Input file '{input_file}' not found.")
+        sys.exit(1)
+    except PermissionError:
+        print(f"Error: Permission denied when reading '{input_file}'.")
+        sys.exit(1)
+
+    tokens = tokenize(input_str)
+    parser = Parser(tokens)
+    if print_tokens:
+        for token in tokens:
+            print(token)
+    ast = parser.parse_program()
+    tacg = TACGenerator()
+    tac = tacg.generate_tac(ast)
+    if print_ast:
+        parser.print_ast(ast)
+    if print_tac:
+        for instr in tac.instructions:
+            print(instr)
+    if optimize:
+        op = Optimizer()
+        op.optimize(tac)
+        if print_optimized_tac:
+            print("After optimization:")
+            for instr in tac.instructions:
+                print(instr)
+
+    x86 = X86Backend(tac)
+    code = x86.generate()
+
+    # Detect operating system and get appropriate commands
+    os_commands = get_os_commands()
+    
+    # Determine file paths
+    build_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "build")
+    objects_dir = os.path.join(build_dir, "objects")
+    executables_dir = os.path.join(build_dir, "executables")
+    runtime_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "runtime")
+    
+    # Ensure directories exist
+    os.makedirs(objects_dir, exist_ok=True)
+    os.makedirs(executables_dir, exist_ok=True)
+    
+    # Determine file names
+    asm_file = os.path.join(objects_dir, "temp.asm")
+    object_file = os.path.join(objects_dir, "temp" + os_commands["object_ext"])
+    executable_file = os.path.join(executables_dir, output_file + os_commands["executable_ext"])
+    runtime_object = os.path.join(runtime_dir, "print_integer.o")
+    
+    # Write assembly file
+    with open(asm_file, "w") as f:
+        f.write(code)
+    
+    try:
+        # Compile assembly with NASM
+        nasm_cmd = os_commands["nasm"] + ["-o", object_file, asm_file]
+        subprocess.run(nasm_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        
+        if platform.system().lower() == "windows":
+            # Windows linking
+            link_cmd = os_commands["linker"] + [object_file, "/out:" + executable_file]
+            subprocess.run(link_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            
+            # Run on Windows
+            subprocess.run([executable_file], check=True)
+        else:
+            # Linux/Unix linking
+            link_cmd = os_commands["linker"] + [
+                "-o",
+                executable_file,
+                object_file,
+                runtime_object,
+            ]
+            subprocess.run(link_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            
+            # Run on Linux/Unix
+            subprocess.run([executable_file], check=True)
+            
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Command execution failed: {e}")
+        if e.stderr:
+            print(f"Details: {e.stderr.decode()}")
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"Error: Required tool not found: {e}")
+        print("Please ensure that NASM and the required linker tools are installed.")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Toy Compiler")
+    parser.add_argument("input_file", help="Input source file to compile")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="program",
+        help="Output executable name (default: program)",
+    )
+    parser.add_argument(
+        "--no-optimize", action="store_true", help="Disable optimization"
+    )
+    parser.add_argument("--print-tokens", action="store_true", help="Print tokens")
+    parser.add_argument("--print-ast", action="store_true", help="Print AST")
+    parser.add_argument("--print-tac", action="store_true", help="Print TAC")
+    parser.add_argument(
+        "--print-optimized-tac", action="store_true", help="Print optimized TAC"
+    )
+
+    args = parser.parse_args()
+
+    compile_program(
+        input_file=args.input_file,
+        optimize=not args.no_optimize,
+        output_file=args.output,
+        print_tokens=args.print_tokens,
+        print_ast=args.print_ast,
+        print_tac=args.print_tac,
+        print_optimized_tac=args.print_optimized_tac,
+    )
+
+
+if __name__ == "__main__":
+    main()

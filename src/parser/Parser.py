@@ -20,7 +20,7 @@
 # <equalize>::= <var> "=" <expression> ";"
 # }
 
-from parserNodes import (
+from .parserNodes import (
     ProgramNode,
     DefinerNode,
     EqualizeNode,

@@ -1,4 +1,4 @@
-from RegexEngine import RegexEngine
+from .RegexEngine import RegexEngine
 
 class TokenMatcher:
     def __init__(self):
