@@ -56,10 +56,10 @@ class Optimizer:
             for instr in instrs:
                 if instr.arg1 in constant_map:
                     changed = True
-                    instr.arg1 = Const(constant_map[instr.arg1])
+                    instr.arg1 = Const(constant_map[instr.arg1], type=instr.arg1.type)
                 if instr.arg2 in constant_map:
                     changed = True
-                    instr.arg2 = Const(constant_map[instr.arg2])
+                    instr.arg2 = Const(constant_map[instr.arg2], type=instr.arg2.type)
             return changed
 
         temp_map = {}
@@ -130,14 +130,14 @@ class Optimizer:
                 ):
 
                     changed = True
-                    instr.arg1 = Const(var_map[instr.arg1])
+                    instr.arg1 = Const(var_map[instr.arg1], type=instr.arg1.type)
                 if instr.arg2 in var_map and (
                     i <= when_to_del[instr.arg2]
                     if when_to_del.get(instr.arg2)
                     else True
                 ):
                     changed = True
-                    instr.arg2 = Const(var_map[instr.arg2])
+                    instr.arg2 = Const(var_map[instr.arg2], type=instr.arg2.type)
             return changed
 
         var_map = {}

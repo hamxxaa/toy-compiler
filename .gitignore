@@ -18,9 +18,11 @@ build/
 .DS_Store
 Thumbs.db
 
-# Legacy files (şu an kullanılmayan)
+# Legacy files (no longer used)
 AsmGenerator.py
 CodeGenerator.py
+runtime/print_integer.asm
+runtime/print_integer.o
 
 # Temporary files
 *.tmp

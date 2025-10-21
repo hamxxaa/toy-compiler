@@ -8,6 +8,7 @@ from parser import Parser
 from codegen import TAC, TACGenerator
 from optimization import Optimizer
 from backend import X86Backend
+from analyzer import SemanticAnalyzer
 
 
 def create_tokenizer():
@@ -16,6 +17,8 @@ def create_tokenizer():
     tokenizer.add_skip_pattern("( |\t|\n)+")
 
     tokenizer.add_pattern("KEYWORD", "(while|print|var|if|do)", priority=5)
+    tokenizer.add_pattern("TYPE", "(int|bool)", priority=5)
+    tokenizer.add_pattern("BOOLEAN", "(true|false)", priority=6)  # Add boolean literals
     tokenizer.add_pattern(
         "IDENTIFIER", "([a-z]|[A-Z])([a-z]|[A-Z]|[0-9]|_)*", priority=4
     )
@@ -65,6 +68,7 @@ def compile_program(
     print_ast=False,
     print_tac=False,
     print_optimized_tac=False,
+    save_asm=None,
 ):
     input_str = ""
     try:
@@ -83,6 +87,8 @@ def compile_program(
         for token in tokens:
             print(token)
     ast = parser.parse_program()
+    sa = SemanticAnalyzer()
+    sa.analyze(ast)
     tacg = TACGenerator()
     tac = tacg.generate_tac(ast)
     if print_ast:
@@ -103,37 +109,49 @@ def compile_program(
 
     # Detect operating system and get appropriate commands
     os_commands = get_os_commands()
-    
+
     # Determine file paths
     build_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "build")
     objects_dir = os.path.join(build_dir, "objects")
     executables_dir = os.path.join(build_dir, "executables")
-    runtime_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "runtime")
-    
+
     # Ensure directories exist
     os.makedirs(objects_dir, exist_ok=True)
     os.makedirs(executables_dir, exist_ok=True)
-    
+
     # Determine file names
-    asm_file = os.path.join(objects_dir, "temp.asm")
-    object_file = os.path.join(objects_dir, "temp" + os_commands["object_ext"])
-    executable_file = os.path.join(executables_dir, output_file + os_commands["executable_ext"])
-    runtime_object = os.path.join(runtime_dir, "print_integer.o")
+    if save_asm:
+        # If save_asm is specified, save the asm file with that name
+        asm_file = os.path.join(objects_dir, save_asm)
+        if not asm_file.endswith('.asm'):
+            asm_file += '.asm'
+    else:
+        # Use temporary asm file that will be deleted later
+        asm_file = os.path.join(objects_dir, "temp.asm")
     
+    object_file = os.path.join(objects_dir, "temp" + os_commands["object_ext"])
+    executable_file = os.path.join(
+        executables_dir, output_file + os_commands["executable_ext"]
+    )
+
     # Write assembly file
     with open(asm_file, "w") as f:
         f.write(code)
-    
+
     try:
         # Compile assembly with NASM
         nasm_cmd = os_commands["nasm"] + ["-o", object_file, asm_file]
-        subprocess.run(nasm_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        
+        subprocess.run(
+            nasm_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+        )
+
         if platform.system().lower() == "windows":
             # Windows linking
             link_cmd = os_commands["linker"] + [object_file, "/out:" + executable_file]
-            subprocess.run(link_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            
+            subprocess.run(
+                link_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+            )
+
             # Run on Windows
             subprocess.run([executable_file], check=True)
         else:
@@ -142,21 +160,32 @@ def compile_program(
                 "-o",
                 executable_file,
                 object_file,
-                runtime_object,
             ]
-            subprocess.run(link_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            
+            subprocess.run(
+                link_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+            )
+
             # Run on Linux/Unix
             subprocess.run([executable_file], check=True)
-            
+
+        # Clean up temporary ASM file if not saving it
+        if not save_asm and os.path.exists(asm_file):
+            os.remove(asm_file)
+
     except subprocess.CalledProcessError as e:
         print(f"Error: Command execution failed: {e}")
         if e.stderr:
             print(f"Details: {e.stderr.decode()}")
+        # Clean up temporary ASM file if compilation failed and not saving it
+        if not save_asm and os.path.exists(asm_file):
+            os.remove(asm_file)
         sys.exit(1)
     except FileNotFoundError as e:
         print(f"Error: Required tool not found: {e}")
         print("Please ensure that NASM and the required linker tools are installed.")
+        # Clean up temporary ASM file if compilation failed and not saving it
+        if not save_asm and os.path.exists(asm_file):
+            os.remove(asm_file)
         sys.exit(1)
 
 
@@ -178,6 +207,10 @@ def main():
     parser.add_argument(
         "--print-optimized-tac", action="store_true", help="Print optimized TAC"
     )
+    parser.add_argument(
+        "--save-asm",
+        help="Save assembly file with specified name (default: don't save)",
+    )
 
     args = parser.parse_args()
 
@@ -189,6 +222,7 @@ def main():
         print_ast=args.print_ast,
         print_tac=args.print_tac,
         print_optimized_tac=args.print_optimized_tac,
+        save_asm=args.save_asm,
     )
 
 

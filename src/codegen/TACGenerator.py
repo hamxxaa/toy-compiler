@@ -24,43 +24,58 @@ class Operand:
 
 
 class TempVar(Operand):
-    def __init__(self, id):
+    def __init__(self, id, type):
         self.id = id
         self.name = f"t{id}"
+        self.type = type
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.type})"
 
     def __eq__(self, other):
-        return isinstance(other, TempVar) and self.name == other.name
+        return (
+            isinstance(other, TempVar)
+            and self.name == other.name
+            and self.type == other.type
+        )
 
     def __hash__(self):
         return hash(self.name)
 
 
 class Var(Operand):
-    def __init__(self, name):
+    def __init__(self, name, type):
         self.name = name
+        self.type = type
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.type})"
 
     def __eq__(self, other):
-        return isinstance(other, Var) and self.name == other.name
+        return (
+            isinstance(other, Var)
+            and self.name == other.name
+            and self.type == other.type
+        )
 
     def __hash__(self):
         return hash(self.name)
 
 
 class Const(Operand):
-    def __init__(self, value):
+    def __init__(self, value, type):
         self.value = value
+        self.type = type
 
     def __str__(self):
-        return str(self.value)
+        return f"{self.value} ({self.type})"
 
     def __eq__(self, other):
-        return isinstance(other, Const) and self.value == other.value
+        return (
+            isinstance(other, Const)
+            and self.value == other.value
+            and self.type == other.type
+        )
 
     def __hash__(self):
         return hash(self.value)
@@ -82,8 +97,8 @@ class TACGenerator:
         self.generate(ast)
         return TAC(self.instructions)
 
-    def new_temp(self):
-        temp = TempVar(self.temp_count)
+    def new_temp(self, type):
+        temp = TempVar(self.temp_count, type)
         self.temp_count += 1
         return temp
 
@@ -112,16 +127,22 @@ class TACGenerator:
     def visit_DefinerNode(self, node):
         value = self.generate(node.value) if node.value else None
         if isinstance(value, Const):
-            self.create_instruction("def", arg1=value, result=Var(node.var_name))
+            self.create_instruction(
+                "def", arg1=value, result=Var(node.name, type=node.type)
+            )
         elif value is not None:
-            self.create_instruction("def", result=Var(node.var_name))
-            self.create_instruction("eq", arg1=value, result=Var(node.var_name))
+            self.create_instruction("def", result=Var(node.name, type=node.type))
+            self.create_instruction(
+                "eq", arg1=value, result=Var(node.name, type=node.type)
+            )
         else:
-            self.create_instruction("def", result=Var(node.var_name))
+            self.create_instruction("def", result=Var(node.name, type=node.type))
 
     def visit_EqualizeNode(self, node):
         value = self.generate(node.value)
-        self.create_instruction("eq", arg1=value, result=Var(node.var_name))
+        self.create_instruction(
+            "eq", arg1=value, result=Var(node.name, type=value.type)
+        )
 
     def visit_IfNode(self, node):
         condition = self.generate(node.condition)
@@ -149,31 +170,43 @@ class TACGenerator:
         self.create_instruction("label", result=end_label)
 
     def visit_PrintNode(self, node):
-        self.create_instruction("print", arg1=Var(node.var_name))
+        # Generate the variable operand properly
+        var_operand = self.generate(node.var)
+        self.create_instruction("print", arg1=var_operand)
 
     def visit_ConditionNode(self, node):
         left = self.generate(node.left)
         right = self.generate(node.right)
-        temp = self.new_temp()
+        temp = self.new_temp(type=node.type)
         self.create_instruction(node.operator, arg1=left, arg2=right, result=temp)
         return temp
 
     def visit_ExpressionNode(self, node):
         left = self.generate(node.left)
         right = self.generate(node.right)
-        temp = self.new_temp()
+        temp = self.new_temp(type=node.type)
         self.create_instruction(node.operator, arg1=left, arg2=right, result=temp)
         return temp
 
     def visit_TermNode(self, node):
         left = self.generate(node.left)
         right = self.generate(node.right)
-        temp = self.new_temp()
+        temp = self.new_temp(type=node.type)
         self.create_instruction(node.operator, arg1=left, arg2=right, result=temp)
         return temp
 
     def visit_FactorNode(self, node):
         if node.is_variable:
-            return Var(node.value)
+            return Var(node.value, type=node.type)
         else:
-            return Const(atoi(node.value))
+            # Handle boolean and integer constants properly
+            if node.type == "bool":
+                if node.value.lower() == "true":
+                    value = 1
+                elif node.value.lower() == "false":
+                    value = 0
+                else:
+                    raise ValueError(f"Invalid boolean value: {node.value}")
+            else:
+                value = atoi(node.value)
+            return Const(value, type=node.type)

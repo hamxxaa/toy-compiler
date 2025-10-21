@@ -5,18 +5,19 @@
 # <print> ::= "print" "(" <var> ")" ";"
 # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
 # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
-# <definer>::= ( "var" <var> ";" ) | ( "var" <var> "=" <expression> ";" )
+# <definer>::= ( "var" <type> <var> ";" ) | ( "var" <type> <var> "=" <expression> ";" )
 # <var>::= <letter>+
 # <number>::= <digit>+
 # <signed_number>::? <number>|"-" <number>
 # <expression> ::= <term> (("+" | "-") <term>)*
 # <term> ::= <factor> (("*" | "/") <factor>)*
-# <factor> ::= <var> | <signed_number> | "(" <expression> ")"
+# <factor> ::= <var> | <signed_number> | <boolean> | "(" <expression> ")"
 # <operator>::= "+" | "-" | "*" | "/"
 # <conditional_operator>::= "<" | ">" | "==" | "<=" | ">=" | "!="
 # <logical_operator>::= "&" | "|"
 # <digit>::= 1|2|3|4|5|6|7|8|9|0
 # <letter>::= a|b|c....z|A|B|C....Z
+# <type>::= "int" | "bool"
 # <equalize>::= <var> "=" <expression> ";"
 # }
 
@@ -88,15 +89,16 @@ class Parser:
             return self.parse_equalize()
 
     def parse_definer(self):
-        # <definer>::= ( "var" <var> ";" ) | ( "var" <var> "=" <expression> ";" )
+        # <definer>::= ( "var" <type> <var> ";" ) | ( "var" <type> <var> "=" <expression> ";" )
         self.tokens.consume("var", "KEYWORD")
+        var_type = self.tokens.consume(expected_type="TYPE")[1]
         var_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
         value = None
         if self.tokens.peek() and self.tokens.peek()[1] == "=":
             self.tokens.consume("=", "SYMBOL")
             value = self.parse_expression()
         self.tokens.consume(";", "SYMBOL")
-        return DefinerNode(var_name, value)
+        return DefinerNode(var_name, value, var_type)
 
     def parse_equalize(self):
         # <equalize>::= <var> "=" <expression> ";"
@@ -135,9 +137,10 @@ class Parser:
         self.tokens.consume("print", "KEYWORD")
         self.tokens.consume("(", "SYMBOL")
         var_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
+        var = FactorNode(var_name, is_variable=True)
         self.tokens.consume(")", "SYMBOL")
         self.tokens.consume(";", "SYMBOL")
-        return PrintNode(var_name)
+        return PrintNode(var)
 
     def parse_condition(self):
         # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
@@ -183,16 +186,19 @@ class Parser:
             self.tokens.consume("(", "SYMBOL")
             node = self.parse_expression()
             self.tokens.consume(")", "SYMBOL")
-            return ExpressionNode(node)
+            return node
         elif token[0] == "IDENTIFIER":
             var_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
             return FactorNode(var_name, is_variable=True)
         elif token[0] in ("NUMBER", "SIGNED_NUMBER"):
             number = self.tokens.consume(expected_type=token[0])[1]
             return FactorNode(number, is_variable=False)
+        elif token[0] == "BOOLEAN":
+            boolean = self.tokens.consume(expected_type="BOOLEAN")[1]
+            return FactorNode(boolean, is_variable=False)
         else:
             raise SyntaxError(
-                f"Error, expected '(', 'IDENTIFIER', 'NUMBER' or 'SIGNED_NUMBER' but found '{token[1]}' at row {token[2]}, column {token[3]}"
+                f"Error, expected '(', 'IDENTIFIER', 'NUMBER', 'SIGNED_NUMBER', or 'BOOLEAN' but found '{token[1]}' at row {token[2]}, column {token[3]}"
             )
 
     def print_ast(self, node, indent=0):
@@ -204,7 +210,7 @@ class Parser:
                 self.print_ast(stmt, indent + 1)
 
         elif isinstance(node, DefinerNode):
-            print(f"{prefix}Definer: var {node.var_name}", end="")
+            print(f"{prefix}Definer: var {node.name}", end="")
             if node.value:
                 print(" =")
                 self.print_ast(node.value, indent + 1)
@@ -212,7 +218,7 @@ class Parser:
                 print()
 
         elif isinstance(node, EqualizeNode):
-            print(f"{prefix}Equalize: {node.var_name} =")
+            print(f"{prefix}Equalize: {node.name} =")
             self.print_ast(node.value, indent + 1)
 
         elif isinstance(node, IfNode):
@@ -228,7 +234,7 @@ class Parser:
                 self.print_ast(stmt, indent + 1)
 
         elif isinstance(node, PrintNode):
-            print(f"{prefix}Print: {node.var_name}")
+            print(f"{prefix}Print: {node.name}")
 
         elif isinstance(node, ConditionNode):
             print(f"{prefix}Condition: {node.operator}")

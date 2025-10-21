@@ -4,14 +4,15 @@ class ProgramNode:
 
 
 class DefinerNode:
-    def __init__(self, var_name, value=None):
-        self.var_name = var_name
+    def __init__(self, name, value=None, type=None):
+        self.name = name
         self.value = value
+        self.type = type
 
 
 class EqualizeNode:
-    def __init__(self, var_name, value):
-        self.var_name = var_name
+    def __init__(self, name, value):
+        self.name = name
         self.value = value
 
 
@@ -28,8 +29,8 @@ class WhileNode:
 
 
 class PrintNode:
-    def __init__(self, var_name):
-        self.var_name = var_name
+    def __init__(self, var):
+        self.var = var
 
 
 class ConditionNode:
@@ -37,6 +38,7 @@ class ConditionNode:
         self.left = left
         self.operator = operator
         self.right = right
+        self.type = None
 
 
 class ExpressionNode:
@@ -44,6 +46,7 @@ class ExpressionNode:
         self.left = left
         self.operator = operator
         self.right = right
+        self.type = None
 
 
 class TermNode:
@@ -51,9 +54,14 @@ class TermNode:
         self.left = left
         self.operator = operator
         self.right = right
+        self.type = None
 
 
 class FactorNode:
     def __init__(self, value, is_variable):
         self.value = value
         self.is_variable = is_variable
+        self.type = None
+
+    def __repr__(self):
+        return f"FactorNode(value={self.value}, is_variable={self.is_variable})"

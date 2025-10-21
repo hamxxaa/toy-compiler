@@ -1,12 +1,23 @@
+import os
 from codegen.TACGenerator import Var, Const, TempVar, TACInstruction, TAC
 
 
 class X86Backend:
     def __init__(self, TAC):
-        self.data_section = "section .data \nmsg db 'code executed successfully', 0xA \nmsglen equ $ - msg \n"
-        self.bss_section = "section .bss \nextern num \n"
-        self.text_section = "section .text \nglobal _start \n_start: \n"
-        self.exit = "mov eax, 4 \nmov ebx, 1 \nmov ecx, msg \nmov edx, msglen \nint 0x80 \nmov eax, 1 \nxor ebx, ebx \nint 0x80 \nextern print_integer \nextern newline \n"
+        self.data_section = "section .data\n"
+        self.bss_section = "section .bss\n"
+        self.text_section = "section .text\nglobal _start\n_start:\n"
+        try:
+            runtime_path = os.path.join(
+                os.path.dirname(__file__), "..", "..", "runtime", "runtime.asm"
+            )
+            with open(runtime_path, "r") as f:
+                self.runtime_code = f.read()
+        except FileNotFoundError:
+            raise RuntimeError(
+                "runtime.asm not found! Cannot include runtime functions."
+            )
+        self.exit_code = "\nmov eax, 1\nxor ebx, ebx\nint 0x80\n"
 
         self.TAC = TAC
         self.counter = 0
@@ -29,13 +40,13 @@ class X86Backend:
         self.liveness_analyzer()
 
     def liveness_analyzer(self):
-        self.live = [set() for _ in range(self.TAC.line_count)]
+        self.live = [set() for _ in range(self.TAC.line_count + 1)]
         instrs = self.TAC.instructions
         live = set()
         first_use = {}
-        for i in range(self.TAC.line_count - 1, -1, -1):
+        for i in range(self.TAC.line_count, 0, -1):
             defs = set()
-            instr = instrs[i]
+            instr = instrs[i - 1]
             if instr.op == "def":
                 defs.add(instr.result)
             if instr.op not in ["goto", "label"]:
@@ -56,68 +67,97 @@ class X86Backend:
 
         for var, line in first_use.items():
             for l in range(line):
-                self.live[l].remove(var)
+                self.live[l].discard(var)
+
+    def get_type_specifier(self, type):
+        if type == "int":
+            return "dd", "dword"
+        elif type == "bool":
+            return "db", "byte"
+        else:
+            raise Exception(f"Unknown type: {type}")
+
+    def get_register_part(self, reg_name, size_specifier):
+        if size_specifier == "dword":
+            return reg_name
+
+        if size_specifier == "byte":
+            if reg_name == "eax":
+                return "al"
+            if reg_name == "ebx":
+                return "bl"
+            if reg_name == "ecx":
+                return "cl"
+            if reg_name == "edx":
+                return "dl"
+
+        raise Exception(f"Cannot get byte-part of register: {reg_name}")
 
     def get_register(self, operand):
+        def get_operand_address(operand):
+            if isinstance(operand, TempVar):
+                return self.temp_map[operand.name]
+            elif isinstance(operand, Var):
+                return f"[{operand.name}]"
+            else:
+                return f"[{operand.value}]"
+
+        def spill_register(reg):
+            # Dont forget to update address descriptor after using this function
+            operand = self.register_descriptors[reg]
+            ts, ss = self.get_type_specifier(operand.type)
+            reg_part = self.get_register_part(reg, ss)
+            address = get_operand_address(operand)
+            self.text_section += f"mov {ss} {address}, {reg_part}\n"
+            # self.register_descriptors[reg] = None # Not needed as we will overwrite it right after
+            self.address_descriptors[operand] = address
+
+        def load_operand_into_register(operand, reg):
+            ts, ss = self.get_type_specifier(operand.type)
+            address = get_operand_address(operand)
+            op = "mov" if operand.type == "int" else "movzx"
+            self.text_section += f"{op} {reg}, {ss} {address}\n"
+            self.register_descriptors[reg] = operand
+            self.address_descriptors[operand] = reg
+
+        def find_reg_to_free():
+            live_set = self.live[self.counter]
+            for reg in self.registers:
+                if self.register_descriptors[reg] not in live_set:
+                    return reg, False
+            for reg in self.registers:
+                if isinstance(self.register_descriptors[reg], Var):
+                    return reg, True
+            return self.registers[0], True
+
         if (
             operand in self.address_descriptors
-            and self.address_descriptors[operand]
             and self.address_descriptors[operand] in self.registers
         ):
             return self.address_descriptors[operand]
+
         for reg in self.registers:
             if self.register_descriptors[reg] is None:
-                self.register_descriptors[reg] = operand
-                self.address_descriptors[operand] = reg
-                if isinstance(operand, TempVar):
-                    self.text_section += f"mov {reg}, {self.temp_map[operand.name]}\n"
-                else:
-                    self.text_section += f"mov {reg}, [{operand.name}]\n"
+                load_operand_into_register(operand, reg)
                 return reg
-        for reg in self.registers:
-            if self.register_descriptors[reg] not in self.live:
-                old_var = self.register_descriptors[reg]
-                del self.address_descriptors[old_var]
-                self.register_descriptors[reg] = operand
-                self.address_descriptors[operand] = reg
-                if isinstance(operand, TempVar):
-                    self.text_section += f"mov {reg}, {self.temp_map[operand.name]}\n"
-                else:
-                    self.text_section += f"mov {reg}, [{operand.name}]\n"
-                return reg
-        for reg in self.registers:
-            if isinstance(self.register_descriptors[reg], Var):
-                old_var = self.register_descriptors[reg]
-                self.text_section += f"mov [{old_var.name}], {reg}\n"
-                if isinstance(operand, TempVar):
-                    self.text_section += f"mov {reg}, {self.temp_map[operand.name]}\n"
-                else:
-                    self.text_section += f"mov {reg}, [{operand.name}]\n"
-                self.address_descriptors[old_var] = f"[{old_var.name}]"
-                self.register_descriptors[reg] = operand
-                self.address_descriptors[operand] = reg
-                return reg
-        reg = self.registers[0]
-        old_var = self.register_descriptors[reg]
-        self.text_section += f"mov [{self.temp_map[old_var.name]}], {reg}\n"
-        if isinstance(operand, TempVar):
-            self.text_section += f"mov {reg}, {self.temp_map[operand.name]}\n"
-        else:
-            self.text_section += f"mov {reg}, [{operand.name}]\n"
-        self.address_descriptors[old_var] = self.temp_map[old_var.name]
-        self.register_descriptors[reg] = operand
-        self.address_descriptors[operand] = reg
+        reg, should_spill = find_reg_to_free()
+        if should_spill:
+            spill_register(reg)
+        load_operand_into_register(operand, reg)
         return reg
 
     def when_will_it_die(self, operand):
+        # returns the last line where operand is alive
         for i in range(self.counter, self.TAC.line_count):
             if operand not in self.live[i]:
-                return i
-        return self.TAC.line_count + 1
+                return i - 1
+        return self.TAC.line_count
+
+    def is_alive(self, operand):
+        return operand in self.live[self.counter]
 
     def generate(self):
         for instr in self.TAC.instructions:
-            self.counter += 1
             if instr.op == "def":
                 self.handle_def(instr)
             elif instr.op == "eq":
@@ -134,25 +174,64 @@ class X86Backend:
                 self.handle_label(instr)
             elif instr.op == "print":
                 self.handle_print(instr)
-        self.text_section += "mov eax, 1\nxor ebx, ebx\nint 0x80\n"
-        return self.data_section + self.bss_section + self.text_section + self.exit
+            self.counter += 1
+
+        runtime_lines = self.runtime_code.split("\n")
+        runtime_text = []
+        runtime_data = []
+        runtime_bss = []
+        current_section = "text"
+
+        for line in runtime_lines:
+            line = line.strip()
+            if line.startswith("section .data"):
+                current_section = "data"
+                continue
+            elif line.startswith("section .bss"):
+                current_section = "bss"
+                continue
+            elif line.startswith("section .text"):
+                current_section = "text"
+                continue
+
+            if current_section == "data":
+                runtime_data.append(line)
+            elif current_section == "bss":
+                runtime_bss.append(line)
+            else:
+                runtime_text.append(line)
+
+        # Build final assembly
+        final_data = self.data_section
+        if runtime_data:
+            final_data += "\n".join(runtime_data) + "\n"
+
+        final_bss = self.bss_section
+        if runtime_bss:
+            final_bss += "\n".join(runtime_bss) + "\n"
+
+        final_text = self.text_section + self.exit_code
+        if runtime_text:
+            final_text += "\n".join(runtime_text) + "\n"
+
+        return final_data + final_bss + final_text
 
     def handle_def(self, instr):
+        ts, ss = self.get_type_specifier(instr.result.type)
         if instr.arg1 is not None:
-            self.data_section += f"{instr.result.name} dd {instr.arg1.value}\n"
+            self.data_section += f"{instr.result.name} {ts} {instr.arg1.value}\n"
         else:
-            self.data_section += f"{instr.result.name} dd 0\n"
+            self.data_section += f"{instr.result.name} {ts} 0\n"
 
     def handle_eq(self, instr):
+        ts, ss = self.get_type_specifier(instr.result.type)
         if isinstance(instr.arg1, Const):
-
-            self.text_section += (
-                f"mov dword [{instr.result.name}], {instr.arg1.value}\n"
-            )
+            self.text_section += f"mov {ss} [{instr.result.name}], {instr.arg1.value}\n"
             self.address_descriptors[instr.result] = f"[{instr.result.name}]"
         elif isinstance(instr.arg1, (TempVar, Var)):
             reg = self.get_register(instr.arg1)
-            self.text_section += f"mov [{instr.result.name}], {reg}\n"
+            reg_part = self.get_register_part(reg, ss)
+            self.text_section += f"mov {ss} [{instr.result.name}], {reg_part}\n"
             self.address_descriptors[instr.result] = f"[{instr.result.name}]"
 
     def handle_binary_op(self, instr):
@@ -161,11 +240,11 @@ class X86Backend:
         if life != 0:
             if isinstance(instr.arg1, TempVar):
                 self.text_section += (
-                    f"mov {first_register}, {self.temp_map[instr.arg1.name]}\n"
+                    f"mov {self.temp_map[instr.arg1.name]}, {first_register}\n"
                 )
                 self.address_descriptors[instr.arg1] = self.temp_map[instr.arg1.name]
             if isinstance(instr.arg1, Var):
-                self.text_section += f"mov {first_register}, [{instr.arg1.name}]\n"
+                self.text_section += f"mov [{instr.arg1.name}], {first_register}\n"
                 self.address_descriptors[instr.arg1] = f"[{instr.arg1.name}]"
         if isinstance(instr.arg2, Const):
             second_register = instr.arg2.value
@@ -193,21 +272,27 @@ class X86Backend:
         else:
             second_register = self.get_register(instr.arg2)
         self.text_section += f"cmp {first_register}, {second_register}\n"
+
+        if self.is_alive(instr.arg1):
+            result_register = self.get_register(instr.result)
+        else:
+            result_register = first_register
+
         if instr.op == "<":
-            self.text_section += f"setl {first_register[1]}l\n"
+            self.text_section += f"setl {result_register[1]}l\n"
         elif instr.op == "<=":
-            self.text_section += f"setle {first_register[1]}l\n"
+            self.text_section += f"setle {result_register[1]}l\n"
         elif instr.op == ">":
-            self.text_section += f"setg {first_register[1]}l\n"
+            self.text_section += f"setg {result_register[1]}l\n"
         elif instr.op == ">=":
-            self.text_section += f"setge {first_register[1]}l\n"
+            self.text_section += f"setge {result_register[1]}l\n"
         elif instr.op == "==":
-            self.text_section += f"sete {first_register[1]}l\n"
+            self.text_section += f"sete {result_register[1]}l\n"
         elif instr.op == "!=":
-            self.text_section += f"setne {first_register[1]}l\n"
-        self.text_section += f"movzx {first_register}, {first_register[1]}l\n"
-        self.address_descriptors[instr.result] = first_register
-        self.register_descriptors[first_register] = instr.result
+            self.text_section += f"setne {result_register[1]}l\n"
+        self.text_section += f"movzx {result_register}, {result_register[1]}l\n"
+        self.address_descriptors[instr.result] = result_register
+        self.register_descriptors[result_register] = instr.result
 
     def handle_goto(self, instr):
         self.text_section += f"jmp {instr.result}\n"
@@ -225,19 +310,28 @@ class X86Backend:
         self.text_section += f"{instr.result}:\n"
 
     def handle_print(self, instr):
-        pushed = [0, 0, 0, 0]
-        if self.register_descriptors["eax"]:
-            self.text_section += "push eax\n"
-        if self.register_descriptors["ebx"]:
-            self.text_section += "push ebx\n"
-        if self.register_descriptors["ecx"]:
-            self.text_section += "push ecx\n"
-        if self.register_descriptors["edx"]:
-            self.text_section += "push edx\n"
-        self.text_section += f"mov eax, dword [{instr.arg1.name}] \nmov dword [num], eax \ncall print_integer \nmov eax, 4 \nmov ebx, 1 \nmov ecx, newline \nmov edx, 1 \nint 0x80\n"
-        for i, reg in enumerate(["eax", "ebx", "ecx", "edx"]):
-            if pushed[i]:
-                self.text_section += f"pop {reg}\n"
+        reg_to_print = self.get_register(instr.arg1)
+        regs = ["eax", "ebx", "ecx", "edx"]
+        pushed_regs = []
+        alive = {"eax": False, "ebx": False, "ecx": False, "edx": False}
+        for reg in regs:
+            alive[reg] = self.register_descriptors[reg] in self.live[self.counter]
+            if reg != reg_to_print and self.register_descriptors[reg] and alive[reg]:
+                self.text_section += f"push {reg}\n"
+                pushed_regs.append(reg)
+        if reg_to_print != "eax":
+            self.text_section += f"mov eax, {reg_to_print}\n"
+        if self.register_descriptors[reg_to_print] in self.live[self.counter]:
+            self.text_section += f"push eax\n"
+            pushed_regs = pushed_regs + ["eax"]
+
+        self.text_section += f"call print_integer\nmov eax, 4\nmov ebx, 1\nmov ecx, newline\nmov edx, 1\nint 0x80\n"
+        for reg in reversed(pushed_regs):
+            self.text_section += f"pop {reg}\n"
+
+        for reg in regs:
+            if not alive[reg]:
+                self.register_descriptors[reg] = None
 
     def handle_division(self, first_register, second_register):
         eax_pushed = False
