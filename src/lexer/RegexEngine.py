@@ -38,6 +38,8 @@ class RegexParser:
         self.pos = 0
 
     def parse(self):
+        if not self.regex:
+            raise ValueError("Empty regex pattern")
         return self.parse_union()
 
     def parse_union(self):
@@ -89,20 +91,43 @@ class RegexParser:
         charset = []
         while self.peek() not in ("]", None):
             if self.peek() == "-":
-                self.consume("-")
                 if not charset:
-                    raise SyntaxError("Invalid character range in charset")
-                start = charset[0]
+                    raise SyntaxError(
+                        "Invalid character set: dash '-' at the beginning. "
+                        "Use '\\-' to include a literal dash, or place it at the end like [a-z-]"
+                    )
+                self.consume("-")
+                if self.peek() in ("]", None):
+                    raise SyntaxError(
+                        "Invalid character range: dash '-' at the end without end character. "
+                        "Expected format: [a-z] or use '\\-' for literal dash"
+                    )
+                start = charset[-1] 
                 end = self.consume()
+                if ord(start) > ord(end):
+                    raise SyntaxError(
+                        f"Invalid character range: '{start}-{end}'. "
+                        f"Start character '{start}' (ord {ord(start)}) comes after "
+                        f"end character '{end}' (ord {ord(end)})"
+                    )
+                charset.pop()
                 charset.extend(chr(c) for c in range(ord(start), ord(end) + 1))
             else:
                 charset.append(self.consume())
+        
+        if self.peek() is None:
+            raise SyntaxError("Unclosed character set: expected ']'")
+        
         self.consume("]")
+        
+        if not charset:
+            raise SyntaxError("Empty character set: [] is not allowed")
+        
         return CharSetNode(charset)
 
     def control_escape(self):
         literal = self.consume()
-        if literal in ("(", "\\", ")", "+", "*", "?","|", "[", "]"):
+        if literal in ("(", "\\", ")", "+", "*", "?", "|", "[", "]"):
             return literal
         else:
             raise SyntaxError(f"Unknown escape sequence: \\{literal}")
@@ -119,11 +144,9 @@ class RegexParser:
         self.pos += 1
         return ch
 
-
-    def printAST(self, ast, indent=0):
+    def printAST(self, indent=0):
         # use for only debug purposes
-        if ast is None:
-            return
+        ast = self.ast
         prefix = " " * indent
         if isinstance(ast, CharNode):
             print(f"{prefix}CharNode({ast.char})")
@@ -203,7 +226,6 @@ class ThompsonConstruction:
         mid.end.transitions.setdefault("", set()).add(mid.start)
         return NFA(start, end)
 
-
     def build(self, ast=None):
         if ast is None:
             ast = self.ast
@@ -221,6 +243,7 @@ class ThompsonConstruction:
     def print_nfa(self, nfa):
         # Assign unique IDs to states for printing
         state_ids = {}
+
         def assign_ids(state, next_id=[0]):
             if state not in state_ids:
                 state_ids[state] = next_id[0]
@@ -228,10 +251,12 @@ class ThompsonConstruction:
                 for chars, states in state.transitions.items():
                     for s in states:
                         assign_ids(s, next_id)
+
         assign_ids(nfa.start)
 
         # Print states and transitions
         printed = set()
+
         def print_state(state):
             if state in printed:
                 return
@@ -247,7 +272,9 @@ class ThompsonConstruction:
             for states in state.transitions.values():
                 for s in states:
                     print_state(s)
+
         print_state(nfa.start)
+
 
 class NFAExecutor:
     def __init__(self, nfa):
@@ -278,20 +305,20 @@ class NFAExecutor:
         if any(state.is_final or state is self.nfa.end for state in current_states):
             return string
         return None
-    
+
     def find_longest_match(self, string):
         current_states = self.epsilon_closure({self.nfa.start})
         last_match_pos = -1
-        
+
         for i, char in enumerate(string):
             current_states = self.epsilon_closure(self.move(current_states, char))
             if not current_states:
                 break
             if any(state.is_final or state is self.nfa.end for state in current_states):
                 last_match_pos = i
-        
+
         if last_match_pos >= 0:
-            return string[:last_match_pos + 1], last_match_pos + 1
+            return string[: last_match_pos + 1], last_match_pos + 1
         return None, 0
 
 

@@ -47,13 +47,14 @@ class X86Backend:
         for i in range(self.TAC.line_count, 0, -1):
             defs = set()
             instr = instrs[i - 1]
-            if instr.op == "def":
+            if (
+                instr.result
+                and isinstance(instr.result, (Var, TempVar))
+                and instr.op not in ["goto", "label", "if", "print"]
+            ):
                 defs.add(instr.result)
+
             if instr.op not in ["goto", "label"]:
-                if instr.result and isinstance(instr.result, (Var, TempVar)):
-                    if isinstance(instr.result, TempVar):
-                        first_use[instr.result] = i
-                    live.add(instr.result)
                 if instr.arg1 and isinstance(instr.arg1, (Var, TempVar)):
                     if isinstance(instr.arg1, TempVar):
                         first_use[instr.arg1] = i
@@ -201,7 +202,6 @@ class X86Backend:
             else:
                 runtime_text.append(line)
 
-        # Build final assembly
         final_data = self.data_section
         if runtime_data:
             final_data += "\n".join(runtime_data) + "\n"
@@ -248,6 +248,8 @@ class X86Backend:
                 self.address_descriptors[instr.arg1] = f"[{instr.arg1.name}]"
         if isinstance(instr.arg2, Const):
             second_register = instr.arg2.value
+        elif self.address_descriptors[instr.arg2]:  # memory to reg operations allowed
+            second_register = self.address_descriptors[instr.arg2]
         else:
             second_register = self.get_register(instr.arg2)
         if instr.op == "+":
@@ -271,26 +273,26 @@ class X86Backend:
             second_register = instr.arg2.value
         else:
             second_register = self.get_register(instr.arg2)
+
+        result_register = self.get_register(instr.result)
+        result_register_part = self.get_register_part(result_register, "byte")
+        self.text_section += f"xor {result_register}, {result_register}\n"
+
         self.text_section += f"cmp {first_register}, {second_register}\n"
 
-        if self.is_alive(instr.arg1):
-            result_register = self.get_register(instr.result)
-        else:
-            result_register = first_register
-
         if instr.op == "<":
-            self.text_section += f"setl {result_register[1]}l\n"
+            self.text_section += f"setl {result_register_part}\n"
         elif instr.op == "<=":
-            self.text_section += f"setle {result_register[1]}l\n"
+            self.text_section += f"setle {result_register_part}\n"
         elif instr.op == ">":
-            self.text_section += f"setg {result_register[1]}l\n"
+            self.text_section += f"setg {result_register_part}\n"
         elif instr.op == ">=":
-            self.text_section += f"setge {result_register[1]}l\n"
+            self.text_section += f"setge {result_register_part}\n"
         elif instr.op == "==":
-            self.text_section += f"sete {result_register[1]}l\n"
+            self.text_section += f"sete {result_register_part}\n"
         elif instr.op == "!=":
-            self.text_section += f"setne {result_register[1]}l\n"
-        self.text_section += f"movzx {result_register}, {result_register[1]}l\n"
+            self.text_section += f"setne {result_register_part}\n"
+        # self.text_section += f"movzx {result_register}, {result_register_part}\n" # Not needed as we zeroed the register at the start. this might cause issues afterwards so i wont delete this line
         self.address_descriptors[instr.result] = result_register
         self.register_descriptors[result_register] = instr.result
 
@@ -310,23 +312,63 @@ class X86Backend:
         self.text_section += f"{instr.result}:\n"
 
     def handle_print(self, instr):
-        reg_to_print = self.get_register(instr.arg1)
-        regs = ["eax", "ebx", "ecx", "edx"]
-        pushed_regs = []
-        alive = {"eax": False, "ebx": False, "ecx": False, "edx": False}
-        for reg in regs:
-            alive[reg] = self.register_descriptors[reg] in self.live[self.counter]
-            if reg != reg_to_print and self.register_descriptors[reg] and alive[reg]:
-                self.text_section += f"push {reg}\n"
-                pushed_regs.append(reg)
-        if reg_to_print != "eax":
-            self.text_section += f"mov eax, {reg_to_print}\n"
-        if self.register_descriptors[reg_to_print] in self.live[self.counter]:
-            self.text_section += f"push eax\n"
-            pushed_regs = pushed_regs + ["eax"]
+        if isinstance(instr.arg1, Const):
+            regs = ["eax", "ebx", "ecx", "edx"]
+            pushed_regs = []
+            alive = {"eax": False, "ebx": False, "ecx": False, "edx": False}
+            for reg in regs:
+                alive[reg] = self.register_descriptors[reg] in self.live[self.counter]
+                if self.register_descriptors[reg] and alive[reg]:
+                    self.text_section += f"push {reg}\n"
+                    pushed_regs.append(reg)
+            
+            self.text_section += f"mov eax, {instr.arg1.value}\n"
+            
+            if instr.arg1.type == "bool":
+                self.text_section += f"call print_boolean\n"
+            else:
+                self.text_section += f"call print_integer\n"
 
-        self.text_section += f"call print_integer\nmov eax, 4\nmov ebx, 1\nmov ecx, newline\nmov edx, 1\nint 0x80\n"
-        for reg in reversed(pushed_regs):
+            for reg in reversed(pushed_regs):
+                self.text_section += f"pop {reg}\n"
+        else:
+            reg_to_print = self.get_register(instr.arg1)
+            regs = ["eax", "ebx", "ecx", "edx"]
+            pushed_regs = []
+            alive = {"eax": False, "ebx": False, "ecx": False, "edx": False}
+            for reg in regs:
+                alive[reg] = self.register_descriptors[reg] in self.live[self.counter]
+                if reg != reg_to_print and self.register_descriptors[reg] and alive[reg]:
+                    self.text_section += f"push {reg}\n"
+                    pushed_regs.append(reg)
+            if reg_to_print != "eax":
+                self.text_section += f"mov eax, {reg_to_print}\n"
+            if self.register_descriptors[reg_to_print] in self.live[self.counter]:
+                self.text_section += f"push eax\n"
+                pushed_regs = pushed_regs + ["eax"]
+
+            if instr.arg1.type == "bool":
+                self.text_section += f"call print_boolean\n"
+            else:
+                self.text_section += f"call print_integer\n"
+
+            for reg in reversed(pushed_regs):
+                self.text_section += f"pop {reg}\n"
+
+        newline_pushed_regs = []
+        for reg in regs:
+            if (
+                self.register_descriptors[reg]
+                and self.register_descriptors[reg] in self.live[self.counter]
+            ):
+                self.text_section += f"push {reg}\n"
+                newline_pushed_regs.append(reg)
+
+        self.text_section += (
+            f"mov eax, 4\nmov ebx, 1\nmov ecx, newline\nmov edx, 1\nint 0x80\n"
+        )
+
+        for reg in reversed(newline_pushed_regs):
             self.text_section += f"pop {reg}\n"
 
         for reg in regs:
@@ -340,7 +382,7 @@ class X86Backend:
             self.text_section += "mov edi, edx\n"
             self.text_section += "cdq\n"
             self.text_section += "idiv edi\n"
-            self.text_section += "mov edi, edx\n"
+            self.text_section += "mov edx, edi\n"
             return
         elif first_register == "edx" and second_register == "eax":
             self.text_section += "mov edi, eax\n"

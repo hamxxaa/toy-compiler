@@ -2,7 +2,7 @@
 # <program> ::= <statement>+
 # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure>
 # <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")"
-# <print> ::= "print" "(" <var> ")" ";"
+# <print> ::= "print" "(" <expression> ")" ";"
 # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
 # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
 # <definer>::= ( "var" <type> <var> ";" ) | ( "var" <type> <var> "=" <expression> ";" )
@@ -39,7 +39,6 @@ class TokenHelper:
     def __init__(self, tokens):
         self.tokens = tokens
         self.position = 0
-        self.variables = []
 
     def peek(self):
         if self.position < len(self.tokens):
@@ -133,14 +132,13 @@ class Parser:
         return WhileNode(condition, statements)
 
     def parse_print(self):
-        # <print> ::= "print" "(" <var> ")" ";"
+        # <print> ::= "print" "(" <expression> ")" ";"
         self.tokens.consume("print", "KEYWORD")
         self.tokens.consume("(", "SYMBOL")
-        var_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
-        var = FactorNode(var_name, is_variable=True)
+        expression = self.parse_expression()
         self.tokens.consume(")", "SYMBOL")
         self.tokens.consume(";", "SYMBOL")
-        return PrintNode(var)
+        return PrintNode(expression)
 
     def parse_condition(self):
         # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"

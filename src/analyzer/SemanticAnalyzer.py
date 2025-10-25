@@ -54,7 +54,7 @@ class SemanticAnalyzer:
         right_type = self.visit(node.right)
 
         if node.operator in ("!=", "<", ">", "<=", ">="):
-            if left_type != right_type and "bool" not in (left_type, right_type):
+            if left_type != right_type or "bool" in (left_type, right_type):
                 raise Exception(
                     f"Type Error: Cannot compare values of type '{left_type}' and '{right_type}'."
                 )
@@ -143,11 +143,9 @@ class SemanticAnalyzer:
         return isinstance(value, bool)
 
     def visit_PrintNode(self, node):
-        var_type = self.symbol_table.lookup(node.var.value)
-        node.var.type = var_type
-        if var_type is None:
-            raise Exception(f"Semantic Error: Variable '{node.var.value}' not defined.")
-        return var_type
+        expression_type = self.visit(node.expression)
+        node.expression.type = expression_type
+        return expression_type
 
     def visit_IfNode(self, node):
         condition_type = self.visit(node.condition)

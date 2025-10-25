@@ -1,9 +1,30 @@
 from codegen.TACGenerator import *
+import warnings
 
 
 class Optimizer:
     def __init__(self):
         pass
+
+    @staticmethod
+    def wrap_to_32bit(value):
+        INT32_MIN = -2147483648
+        INT32_MAX = 2147483647
+
+        if value < INT32_MIN or value > INT32_MAX:
+            warnings.warn(
+                f"Integer overflow in constant folding: {value} wraps to 32-bit range. "
+                f"This matches runtime x86 behavior but may indicate a bug.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+        wrapped = value % (2**32)
+
+        if wrapped >= 2**31:
+            wrapped -= 2**32
+
+        return wrapped
 
     def optimize(self, TAC):
         blocks = self.get_blocks(TAC.instructions)
@@ -87,17 +108,27 @@ class Optimizer:
                 ):
                     changed = True
                     if instr.op == "+":
-                        constant = instr.arg1.value + instr.arg2.value
+                        constant = self.wrap_to_32bit(
+                            instr.arg1.value + instr.arg2.value
+                        )
                     elif instr.op == "-":
-                        constant = instr.arg1.value - instr.arg2.value
+                        constant = self.wrap_to_32bit(
+                            instr.arg1.value - instr.arg2.value
+                        )
                     elif instr.op == "*":
-                        constant = instr.arg1.value * instr.arg2.value
+                        constant = self.wrap_to_32bit(
+                            instr.arg1.value * instr.arg2.value
+                        )
                     elif instr.op == "/":
+                        if instr.arg2.value == 0:
+                            raise ZeroDivisionError(
+                                "Division by zero in constant folding"
+                            )
                         constant = instr.arg1.value / instr.arg2.value
                     elif instr.op == "&":
-                        constant = instr.arg1.value & instr.arg2.value
+                        constant = instr.arg1.value and instr.arg2.value
                     elif instr.op == "|":
-                        constant = instr.arg1.value | instr.arg2.value
+                        constant = instr.arg1.value or instr.arg2.value
                     elif instr.op == "<":
                         constant = 1 if int(instr.arg1.value < instr.arg2.value) else 0
                     elif instr.op == "<=":

@@ -1,6 +1,3 @@
-from locale import atoi
-
-
 class TACInstruction:
     def __init__(self, op, arg1=None, arg2=None, result=None):
         self.op = op
@@ -170,9 +167,8 @@ class TACGenerator:
         self.create_instruction("label", result=end_label)
 
     def visit_PrintNode(self, node):
-        # Generate the variable operand properly
-        var_operand = self.generate(node.var)
-        self.create_instruction("print", arg1=var_operand)
+        expression_result = self.generate(node.expression)
+        self.create_instruction("print", arg1=expression_result)
 
     def visit_ConditionNode(self, node):
         left = self.generate(node.left)
@@ -208,5 +204,9 @@ class TACGenerator:
                 else:
                     raise ValueError(f"Invalid boolean value: {node.value}")
             else:
-                value = atoi(node.value)
+                value = int(node.value)
+                if value < -2147483648 or value > 2147483647:
+                    raise ValueError(
+                        f"Integer constant out of bounds (32-bit): {value}"
+                    )
             return Const(value, type=node.type)

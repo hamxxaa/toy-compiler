@@ -27,3 +27,6 @@ runtime/print_integer.o
 # Temporary files
 *.tmp
 *.bak
+
+# Test Files
+/tests/*

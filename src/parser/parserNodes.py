@@ -29,8 +29,8 @@ class WhileNode:
 
 
 class PrintNode:
-    def __init__(self, var):
-        self.var = var
+    def __init__(self, expression):
+        self.expression = expression
 
 
 class ConditionNode:

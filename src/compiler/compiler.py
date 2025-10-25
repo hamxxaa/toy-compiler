@@ -80,6 +80,9 @@ def compile_program(
     except PermissionError:
         print(f"Error: Permission denied when reading '{input_file}'.")
         sys.exit(1)
+    if not input_str.strip():
+        print("Error: Input file is empty.")
+        sys.exit(1)
 
     tokens = tokenize(input_str)
     parser = Parser(tokens)
