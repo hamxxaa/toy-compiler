@@ -1,6 +1,6 @@
-        var int a = 10;
-        var int b = 20;
-        var int c = 5;
-        var int result;
-        result = a + b * c;
-        print(result);
+var bool a = false;
+
+if a do (
+    print(a);
+)
+

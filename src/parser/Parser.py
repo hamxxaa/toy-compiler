@@ -4,7 +4,7 @@
 # <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")"
 # <print> ::= "print" "(" <expression> ")" ";"
 # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
-# <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
+# <condition> ::= <expression> | <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
 # <definer>::= ( "var" <type> <var> ";" ) | ( "var" <type> <var> "=" <expression> ";" )
 # <var>::= <letter>+
 # <number>::= <digit>+
@@ -33,6 +33,9 @@ from .parserNodes import (
     TermNode,
     FactorNode,
 )
+
+conditional_operators = {"<", ">", "==", "<=", ">=", "!="}
+logical_operators = {"&", "|"}
 
 
 class TokenHelper:
@@ -141,12 +144,12 @@ class Parser:
         return PrintNode(expression)
 
     def parse_condition(self):
-        # <condition> ::= <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
+        # <condition> ::= <expression> | <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
         if self.tokens.peek()[1] == "(":
             self.tokens.consume("(", "SYMBOL")
             node = self.parse_condition()
             self.tokens.consume(")", "SYMBOL")
-            while self.tokens.peek() and self.tokens.peek()[1] in ("&", "|"):
+            while self.tokens.peek() and self.tokens.peek()[1] in logical_operators:
                 operator = self.tokens.consume(expected_type="LOGICAL_OPERATOR")[1]
                 self.tokens.consume("(", "SYMBOL")
                 right = self.parse_condition()
@@ -155,6 +158,11 @@ class Parser:
             return node
         else:
             left = self.parse_expression()
+            if (
+                not self.tokens.peek()
+                or self.tokens.peek()[1] not in conditional_operators
+            ):
+                return left
             operator = self.tokens.consume(expected_type="CONDITIONAL_OPERATOR")[1]
             right = self.parse_expression()
             return ConditionNode(left, operator, right)
