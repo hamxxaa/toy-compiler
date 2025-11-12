@@ -1,15 +1,15 @@
 
 {
-    var int x = 1;
+    var bool x = true;
     print(x);
     {
-        var int x = 2;
+        var bool x = false;
         print(x);
         {
-            var int x = 3;
+            var bool x = true;
             print(x);
             {
-                var int x = 4;
+                var bool x = false;
                 print(x);
             }
             print(x);
