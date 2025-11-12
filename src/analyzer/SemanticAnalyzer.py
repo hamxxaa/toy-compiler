@@ -1,6 +1,12 @@
 class SymbolTable:
-    def __init__(self):
+    _scope_counter = 0 
+    
+    def __init__(self, parent=None):
         self.symbols = {}
+        self.parent = parent
+        self.storage = "global" if parent is None else "local"
+        self.scope_id = SymbolTable._scope_counter
+        SymbolTable._scope_counter += 1
 
     def define(self, name, type):
         if name in self.symbols:
@@ -8,12 +14,17 @@ class SymbolTable:
         self.symbols[name] = type
 
     def lookup(self, name):
-        return self.symbols.get(name, None)
+        symbol = self.symbols.get(name)
+        if symbol:
+            return symbol, self.storage, self.scope_id
+        if self.parent:
+            return self.parent.lookup(name)
+        return None, None, None
 
 
 class SemanticAnalyzer:
     def __init__(self):
-        self.symbol_table = SymbolTable()
+        self.current_scope = None
 
     def analyze(self, ast):
         self.visit(ast)
@@ -27,11 +38,19 @@ class SemanticAnalyzer:
         raise Exception(f"No visit_{type(node).__name__} method")
 
     def visit_ProgramNode(self, node):
+        self.visit(node.scope)
+
+    def visit_ScopeNode(self, node):
+        parent_scope = self.current_scope
+        self.current_scope = SymbolTable(parent=parent_scope)
         for statement in node.statements:
             self.visit(statement)
+        self.current_scope = parent_scope
 
     def visit_DefinerNode(self, node):
-        self.symbol_table.define(node.name, node.type)
+        self.current_scope.define(node.name, node.type)
+        node.storage = self.current_scope.storage
+        node.scope_id = self.current_scope.scope_id
         if node.value:
             value_type = self.visit(node.value)
             if value_type != node.type:
@@ -40,7 +59,9 @@ class SemanticAnalyzer:
                 )
 
     def visit_EqualizeNode(self, node):
-        var_type = self.symbol_table.lookup(node.name)
+        var_type, storage, scope_id = self.current_scope.lookup(node.name)
+        node.storage = storage
+        node.scope_id = scope_id
         if var_type is None:
             raise Exception(f"Semantic Error: Variable '{node.name}' not defined.")
         value_type = self.visit(node.value)
@@ -109,13 +130,14 @@ class SemanticAnalyzer:
 
     def visit_FactorNode(self, node):
         if node.is_variable:
-            var_type = self.symbol_table.lookup(node.value)
+            var_type, storage, scope_id = self.current_scope.lookup(node.value)
             if var_type is None:
                 raise Exception(f"Semantic Error: Variable '{node.value}' not defined.")
             node.type = var_type
+            node.storage = storage
+            node.scope_id = scope_id
             return var_type
         else:
-            # Handle constant values (stored as strings from tokens)
             if self._is_integer_literal(node.value):
                 node.type = "int"
                 return "int"
@@ -128,16 +150,13 @@ class SemanticAnalyzer:
                 )
 
     def _is_integer_literal(self, value):
-        """Check if the value is an integer literal (handles both positive and negative)"""
         if isinstance(value, str):
-            # Handle signed numbers like "-123" and regular numbers like "123"
             if value.startswith("-"):
                 return value[1:].isdigit() and len(value) > 1
             return value.isdigit()
         return isinstance(value, int)
 
     def _is_boolean_literal(self, value):
-        """Check if the value is a boolean literal"""
         if isinstance(value, str):
             return value.lower() in ("true", "false")
         return isinstance(value, bool)
@@ -153,8 +172,7 @@ class SemanticAnalyzer:
             raise Exception(
                 f"Type Error: If condition must be of type 'bool', got '{condition_type}'."
             )
-        for statement in node.statements:
-            self.visit(statement)
+        self.visit(node.scope)
 
     def visit_WhileNode(self, node):
         condition_type = self.visit(node.condition)
@@ -162,5 +180,4 @@ class SemanticAnalyzer:
             raise Exception(
                 f"Type Error: While condition must be of type 'bool', got '{condition_type}'."
             )
-        for statement in node.statements:
-            self.visit(statement)
+        self.visit(node.scope)

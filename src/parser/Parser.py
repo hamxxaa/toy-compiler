@@ -1,9 +1,10 @@
 # L={
-# <program> ::= <statement>+
-# <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure>
-# <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")"
+# <program> ::= <scope>
+# <scope> ::= "{" <statement>+ "}"
+# <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure> | <scope>
+# <while_structure> ::= "while" <condition> "do" <scope>
 # <print> ::= "print" "(" <expression> ")" ";"
-# <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
+# <if_structure> ::= "if" <condition> "do" <scope>
 # <condition> ::= <expression> | <expression> <conditional_operator> <expression> | "(" <condition> ")" <logical_operator> "(" <condition> ")"
 # <definer>::= ( "var" <type> <var> ";" ) | ( "var" <type> <var> "=" <expression> ";" )
 # <var>::= <letter>+
@@ -23,6 +24,7 @@
 
 from .parserNodes import (
     ProgramNode,
+    ScopeNode,
     DefinerNode,
     EqualizeNode,
     IfNode,
@@ -70,14 +72,21 @@ class Parser:
         self.tokens = TokenHelper(tokens)
 
     def parse_program(self):
-        # <program> ::= <statement>+
+        # <program> ::= <scope>
+        scope = self.parse_scope()
+        return ProgramNode(scope)
+
+    def parse_scope(self):
+        # <scope> ::= "{" <statement>+ "}"
+        self.tokens.consume("{", "SYMBOL")
         statements = []
-        while self.tokens.peek():
+        while self.tokens.peek() and self.tokens.peek()[1] != "}":
             statements.append(self.parse_statement())
-        return ProgramNode(statements)
+        self.tokens.consume("}", "SYMBOL")
+        return ScopeNode(statements)  # Reusing ProgramNode for scope
 
     def parse_statement(self):
-        # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure>
+        # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure> | <scope>
         token = self.tokens.peek()
         if token[1] == "var":
             return self.parse_definer()
@@ -87,6 +96,8 @@ class Parser:
             return self.parse_while_structure()
         elif token[1] == "print":
             return self.parse_print()
+        elif token[1] == "{":
+            return self.parse_scope()
         else:
             return self.parse_equalize()
 
@@ -111,28 +122,20 @@ class Parser:
         return EqualizeNode(var_name, value)
 
     def parse_if_structure(self):
-        # <if_structure> ::= "if" <condition> "do" "(" <statement>+ ")"
+        # <if_structure> ::= "if" <condition> "do" <scope>
         self.tokens.consume("if", "KEYWORD")
         condition = self.parse_condition()
         self.tokens.consume("do", "KEYWORD")
-        self.tokens.consume("(", "SYMBOL")
-        statements = []
-        while self.tokens.peek() and self.tokens.peek()[1] != ")":
-            statements.append(self.parse_statement())
-        self.tokens.consume(")", "SYMBOL")
-        return IfNode(condition, statements)
+        scope = self.parse_scope()
+        return IfNode(condition, scope)
 
     def parse_while_structure(self):
-        # <while_structure> ::= "while" <condition> "do" "(" <statement>+ ")"
+        # <while_structure> ::= "while" <condition> "do" <scope>
         self.tokens.consume("while", "KEYWORD")
         condition = self.parse_condition()
         self.tokens.consume("do", "KEYWORD")
-        self.tokens.consume("(", "SYMBOL")
-        statements = []
-        while self.tokens.peek() and self.tokens.peek()[1] != ")":
-            statements.append(self.parse_statement())
-        self.tokens.consume(")", "SYMBOL")
-        return WhileNode(condition, statements)
+        scope = self.parse_scope()
+        return WhileNode(condition, scope)
 
     def parse_print(self):
         # <print> ::= "print" "(" <expression> ")" ";"
@@ -212,6 +215,10 @@ class Parser:
 
         if isinstance(node, ProgramNode):
             print(f"{prefix}Program:")
+            self.print_ast(node.scope, indent + 1)
+
+        if isinstance(node, ScopeNode):
+            print(f"{prefix}Scope:")
             for stmt in node.statements:
                 self.print_ast(stmt, indent + 1)
 
@@ -230,17 +237,16 @@ class Parser:
         elif isinstance(node, IfNode):
             print(f"{prefix}If:")
             self.print_ast(node.condition, indent + 1)
-            for stmt in node.statements:
-                self.print_ast(stmt, indent + 1)
+            self.print_ast(node.scope, indent + 1)
 
         elif isinstance(node, WhileNode):
             print(f"{prefix}While:")
             self.print_ast(node.condition, indent + 1)
-            for stmt in node.statements:
-                self.print_ast(stmt, indent + 1)
+            self.print_ast(node.scope, indent + 1)
 
         elif isinstance(node, PrintNode):
-            print(f"{prefix}Print: {node.name}")
+            print(f"{prefix}Print:")
+            self.print_ast(node.expression, indent + 1)
 
         elif isinstance(node, ConditionNode):
             print(f"{prefix}Condition: {node.operator}")

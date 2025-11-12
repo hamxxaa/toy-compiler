@@ -1,4 +1,9 @@
 class ProgramNode:
+    def __init__(self, scope):
+        self.scope = scope
+
+
+class ScopeNode:
     def __init__(self, statements):
         self.statements = statements
 
@@ -8,24 +13,27 @@ class DefinerNode:
         self.name = name
         self.value = value
         self.type = type
-
+        self.storage = None
+        self.scope_id = None
 
 class EqualizeNode:
     def __init__(self, name, value):
         self.name = name
         self.value = value
+        self.storage = None
+        self.scope_id = None
 
 
 class IfNode:
-    def __init__(self, condition, statements):
+    def __init__(self, condition, scope):
         self.condition = condition
-        self.statements = statements
+        self.scope = scope
 
 
 class WhileNode:
-    def __init__(self, condition, statements):
+    def __init__(self, condition, scope):
         self.condition = condition
-        self.statements = statements
+        self.scope = scope
 
 
 class PrintNode:
@@ -62,6 +70,8 @@ class FactorNode:
         self.value = value
         self.is_variable = is_variable
         self.type = None
+        self.storage = None
+        self.scope_id = None
 
     def __repr__(self):
         return f"FactorNode(value={self.value}, is_variable={self.is_variable})"

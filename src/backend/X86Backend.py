@@ -24,20 +24,39 @@ class X86Backend:
         self.registers = ["eax", "ebx", "ecx", "edx"]
         self.register_descriptors = {reg: None for reg in self.registers}
         self.address_descriptors = {}
-        temps = set()
+        self.stack_map = {}
+        self.never_alive_vars = set()
         for instr in self.TAC.instructions:
-            if isinstance(instr.result, TempVar):
-                temps.add(instr.result.name)
-        self.max_temp_count = len(temps)
-        self.text_section += (
-            f"push ebp\nmov ebp, esp\nsub esp, {self.max_temp_count * 4}\n"
-        )
-        self.temp_map = {}
-        i = 0
-        for temp in temps:
-            i += 1
-            self.temp_map[temp] = f"[ebp - {i*4}]"
+            if isinstance(instr.result, TempVar) or (
+                isinstance(instr.result, Var) and instr.result.storage == "local"
+            ):
+                self.stack_map[instr.result] = None
+        self.stack_map_count = len(self.stack_map)
+        self.live_set_line_count = 0
         self.liveness_analyzer()
+        max_count, max_local_and_temp_var_set, max_var_size = (
+            self.get_max_alive_temp_and_local_vars()
+        )
+        self.text_section += (
+            f"push ebp\nmov ebp, esp\nsub esp, {max_count*max_var_size}\n"
+        )
+        self.set_local_and_tempvar_addresses(max_count, max_var_size)
+
+    def set_local_and_tempvar_addresses(self, max_count, max_var_size):
+        available_slots = []
+        for i in range(max_count):
+            available_slots.append(f"[ebp - {i * max_var_size}]")
+        for i in range(self.live_set_line_count):
+            for var in self.live[i]:
+                if (var in self.stack_map) and (self.stack_map[var] is None):
+                    self.stack_map[var] = available_slots.pop(0)
+                deads = self.live[i - 1] - self.live[i]
+                for dead in deads:
+                    if dead in self.stack_map and self.stack_map[dead] is not None:
+                        available_slots.append(self.stack_map[dead])
+        for var in self.stack_map:
+            if self.stack_map[var] is None:
+                self.never_alive_vars.add(var)
 
     def liveness_analyzer(self):
         self.live = [set() for _ in range(self.TAC.line_count + 1)]
@@ -69,6 +88,33 @@ class X86Backend:
         for var, line in first_use.items():
             for l in range(line):
                 self.live[l].discard(var)
+        self.live_set_line_count = len(self.live)
+
+    def get_max_alive_temp_and_local_vars(self):
+        max_count = 0
+        max_set = set()
+        max_var_size = 0
+        for live_set in self.live:
+            current_count = 0
+            current_var_size = 0
+            for var in live_set:
+                if isinstance(var, TempVar) or (
+                    isinstance(var, Var) and var.storage == "local"
+                ):
+                    if var.type == "int":
+                        current_var_size = 4
+                    current_count += 1
+            if current_count > max_count:
+                max_count = current_count
+                max_set = set(
+                    var
+                    for var in live_set
+                    if isinstance(var, (TempVar))
+                    or (isinstance(var, Var) and var.storage == "local")
+                )
+            if current_var_size > max_var_size:
+                max_var_size = current_var_size
+        return max_count, max_set, max_var_size
 
     def get_type_specifier(self, type):
         if type == "int":
@@ -77,6 +123,12 @@ class X86Backend:
             return "db", "byte"
         else:
             raise Exception(f"Unknown type: {type}")
+
+    def get_var_location(self, var):
+        if var.storage == "global":
+            return f"[{var.name}]"
+        else:
+            return self.stack_map[var]
 
     def get_register_part(self, reg_name, size_specifier):
         if size_specifier == "dword":
@@ -97,9 +149,9 @@ class X86Backend:
     def get_register(self, operand):
         def get_operand_address(operand):
             if isinstance(operand, TempVar):
-                return self.temp_map[operand.name]
+                return self.stack_map[operand]
             elif isinstance(operand, Var):
-                return f"[{operand.name}]"
+                return self.get_var_location(operand)
             else:
                 return f"[{operand.value}]"
 
@@ -218,21 +270,28 @@ class X86Backend:
 
     def handle_def(self, instr):
         ts, ss = self.get_type_specifier(instr.result.type)
-        if instr.arg1 is not None:
-            self.data_section += f"{instr.result.name} {ts} {instr.arg1.value}\n"
-        else:
-            self.data_section += f"{instr.result.name} {ts} 0\n"
+        if instr.result.storage == "global":
+            if instr.arg1 is not None:
+                self.data_section += f"{instr.result.name} {ts} {instr.arg1.value}\n"
+            else:
+                self.data_section += f"{instr.result.name} {ts} 0\n"
+        else:  # local
+            if instr.arg1 is not None and instr.result not in self.never_alive_vars:
+                location = self.get_var_location(instr.result)
+                self.text_section += f"mov {ss} {location}, {instr.arg1.value}\n"
+                self.address_descriptors[instr.result] = location
 
     def handle_eq(self, instr):
         ts, ss = self.get_type_specifier(instr.result.type)
+        location = self.get_var_location(instr.result)
         if isinstance(instr.arg1, Const):
-            self.text_section += f"mov {ss} [{instr.result.name}], {instr.arg1.value}\n"
-            self.address_descriptors[instr.result] = f"[{instr.result.name}]"
+            self.text_section += f"mov {ss} {location}, {instr.arg1.value}\n"
+            self.address_descriptors[instr.result] = location
         elif isinstance(instr.arg1, (TempVar, Var)):
             reg = self.get_register(instr.arg1)
             reg_part = self.get_register_part(reg, ss)
-            self.text_section += f"mov {ss} [{instr.result.name}], {reg_part}\n"
-            self.address_descriptors[instr.result] = f"[{instr.result.name}]"
+            self.text_section += f"mov {ss} {location}, {reg_part}\n"
+            self.address_descriptors[instr.result] = location
 
     def handle_binary_op(self, instr):
         first_register = self.get_register(instr.arg1)
@@ -240,12 +299,13 @@ class X86Backend:
         if life != 0:
             if isinstance(instr.arg1, TempVar):
                 self.text_section += (
-                    f"mov {self.temp_map[instr.arg1.name]}, {first_register}\n"
+                    f"mov {self.stack_map[instr.arg1]}, {first_register}\n"
                 )
-                self.address_descriptors[instr.arg1] = self.temp_map[instr.arg1.name]
+                self.address_descriptors[instr.arg1] = self.stack_map[instr.arg1]
             if isinstance(instr.arg1, Var):
-                self.text_section += f"mov [{instr.arg1.name}], {first_register}\n"
-                self.address_descriptors[instr.arg1] = f"[{instr.arg1.name}]"
+                location = self.get_var_location(instr.arg1)
+                self.text_section += f"mov {location}, {first_register}\n"
+                self.address_descriptors[instr.arg1] = location
         if isinstance(instr.arg2, Const):
             second_register = instr.arg2.value
         elif self.address_descriptors[instr.arg2]:  # memory to reg operations allowed
@@ -321,9 +381,9 @@ class X86Backend:
                 if self.register_descriptors[reg] and alive[reg]:
                     self.text_section += f"push {reg}\n"
                     pushed_regs.append(reg)
-            
+
             self.text_section += f"mov eax, {instr.arg1.value}\n"
-            
+
             if instr.arg1.type == "bool":
                 self.text_section += f"call print_boolean\n"
             else:
@@ -338,7 +398,11 @@ class X86Backend:
             alive = {"eax": False, "ebx": False, "ecx": False, "edx": False}
             for reg in regs:
                 alive[reg] = self.register_descriptors[reg] in self.live[self.counter]
-                if reg != reg_to_print and self.register_descriptors[reg] and alive[reg]:
+                if (
+                    reg != reg_to_print
+                    and self.register_descriptors[reg]
+                    and alive[reg]
+                ):
                     self.text_section += f"push {reg}\n"
                     pushed_regs.append(reg)
             if reg_to_print != "eax":
@@ -373,6 +437,10 @@ class X86Backend:
 
         for reg in regs:
             if not alive[reg]:
+                if self.register_descriptors[reg]:
+                    var_to_clear = self.register_descriptors[reg]
+                    if var_to_clear in self.address_descriptors and self.address_descriptors[var_to_clear] == reg:
+                        del self.address_descriptors[var_to_clear]
                 self.register_descriptors[reg] = None
 
     def handle_division(self, first_register, second_register):

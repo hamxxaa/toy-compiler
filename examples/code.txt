@@ -1,6 +1,20 @@
-var bool a = false;
 
-if a do (
-    print(a);
-)
-
+{
+    var int x = 1;
+    print(x);
+    {
+        var int x = 2;
+        print(x);
+        {
+            var int x = 3;
+            print(x);
+            {
+                var int x = 4;
+                print(x);
+            }
+            print(x);
+        }
+        print(x);
+    } 
+    print(x);
+}

@@ -24,7 +24,7 @@ def create_tokenizer():
     )
     tokenizer.add_pattern("SIGNED_NUMBER", "-[0-9]+", priority=6)
     tokenizer.add_pattern("NUMBER", "[0-9]+", priority=3)
-    tokenizer.add_pattern("SYMBOL", "(;|\\(|\\)|=)", priority=2)
+    tokenizer.add_pattern("SYMBOL", "(;|\\(|\\)|=|}|{)", priority=2)
     tokenizer.add_pattern("OPERATOR", "(\\+|-|\\*|/)", priority=1)
     tokenizer.add_pattern("CONDITIONAL_OPERATOR", "(<|>|==|<=|>=|!=)", priority=1)
     tokenizer.add_pattern("LOGICAL_OPERATOR", "(&|\\|)", priority=1)

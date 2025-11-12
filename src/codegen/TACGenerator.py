@@ -37,27 +37,31 @@ class TempVar(Operand):
         )
 
     def __hash__(self):
-        return hash(self.name)
-
+        return hash((self.name, self.type))
 
 class Var(Operand):
-    def __init__(self, name, type):
+    def __init__(self, name, type, storage="global", scope_id=0):
         self.name = name
         self.type = type
+        self.storage = storage
+        self.scope_id = scope_id
 
     def __str__(self):
-        return f"{self.name} ({self.type})"
+        if self.storage == "local":
+            return f"{self.name}_s{self.scope_id} ({self.type}, {self.storage})"
+        return f"{self.name} ({self.type}, {self.storage})"
 
     def __eq__(self, other):
         return (
             isinstance(other, Var)
             and self.name == other.name
             and self.type == other.type
+            and self.storage == other.storage
+            and self.scope_id == other.scope_id
         )
 
     def __hash__(self):
-        return hash(self.name)
-
+        return hash((self.name, self.type, self.storage, self.scope_id))
 
 class Const(Operand):
     def __init__(self, value, type):
@@ -75,7 +79,7 @@ class Const(Operand):
         )
 
     def __hash__(self):
-        return hash(self.value)
+        return hash((self.value, self.type))
 
 
 class TAC:
@@ -118,6 +122,9 @@ class TACGenerator:
         raise Exception(f"No visit_{type(node).__name__} method")
 
     def visit_ProgramNode(self, node):
+        self.generate(node.scope)
+
+    def visit_ScopeNode(self, node):
         for statement in node.statements:
             self.generate(statement)
 
@@ -125,20 +132,24 @@ class TACGenerator:
         value = self.generate(node.value) if node.value else None
         if isinstance(value, Const):
             self.create_instruction(
-                "def", arg1=value, result=Var(node.name, type=node.type)
+                "def", arg1=value, result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
             )
         elif value is not None:
-            self.create_instruction("def", result=Var(node.name, type=node.type))
             self.create_instruction(
-                "eq", arg1=value, result=Var(node.name, type=node.type)
+                "def", result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
+            )
+            self.create_instruction(
+                "eq", arg1=value, result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
             )
         else:
-            self.create_instruction("def", result=Var(node.name, type=node.type))
+            self.create_instruction(
+                "def", result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
+            )
 
     def visit_EqualizeNode(self, node):
         value = self.generate(node.value)
         self.create_instruction(
-            "eq", arg1=value, result=Var(node.name, type=value.type)
+            "eq", arg1=value, result=Var(node.name, type=value.type, storage=node.storage, scope_id=node.scope_id)
         )
 
     def visit_IfNode(self, node):
@@ -148,8 +159,7 @@ class TACGenerator:
         end_label = self.new_label()
         self.create_instruction("goto", result=end_label)
         self.create_instruction("label", result=start_label)
-        for statement in node.statements:
-            self.generate(statement)
+        self.generate(node.scope)
         self.create_instruction("label", result=end_label)
 
     def visit_WhileNode(self, node):
@@ -161,8 +171,7 @@ class TACGenerator:
         self.create_instruction("if", arg1=condition, result=mid_label)
         self.create_instruction("goto", result=end_label)
         self.create_instruction("label", result=mid_label)
-        for statement in node.statements:
-            self.generate(statement)
+        self.generate(node.scope)
         self.create_instruction("goto", result=start_label)
         self.create_instruction("label", result=end_label)
 
@@ -193,7 +202,7 @@ class TACGenerator:
 
     def visit_FactorNode(self, node):
         if node.is_variable:
-            return Var(node.value, type=node.type)
+            return Var(node.value, type=node.type, storage=node.storage, scope_id=node.scope_id)
         else:
             # Handle boolean and integer constants properly
             if node.type == "bool":
