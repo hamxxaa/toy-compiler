@@ -1,12 +1,26 @@
 class ProgramNode:
-    def __init__(self, scope):
-        self.scope = scope
+    def __init__(self, declarations):
+        self.declarations = declarations
 
+class FunctionDefNode:
+    def __init__(self, return_type, name, params, body):
+        self.return_type = return_type
+        self.name = name
+        self.params = params
+        self.body = body
+class FunctionCallNode:
+    def __init__(self, name, args):
+        self.name = name
+        self.args = args
+        self.type = None
+
+class ReturnNode:
+    def __init__(self, expression):
+        self.expression = expression
 
 class ScopeNode:
     def __init__(self, statements):
         self.statements = statements
-
 
 class DefinerNode:
     def __init__(self, name, value=None, type=None):

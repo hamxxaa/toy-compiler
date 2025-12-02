@@ -1,7 +1,15 @@
 # L={
-# <program> ::= <scope>
+# <program> ::= (<declaration>)+
+# <declaration> ::= <definer> | <function_def>
+# <function_def> ::= <type> <var> "(" <param_list>? ")" <scope>
+# <param_list> ::= <param> ("," <param>)*
+# <param> ::= <type> <var>
+# <function_call> ::= <var> "(" <arg_list>? ")"
+# <arg_list> ::= <expression> ("," <expression>)*
 # <scope> ::= "{" <statement>+ "}"
-# <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure> | <scope>
+# <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure> | <scope> | <return_statement> | <function_call_stmt>
+# <function_call_stmt> ::= <function_call> ";"
+# <return_statement> ::= "return" <expression> ";"
 # <while_structure> ::= "while" <condition> "do" <scope>
 # <print> ::= "print" "(" <expression> ")" ";"
 # <if_structure> ::= "if" <condition> "do" <scope>
@@ -12,7 +20,7 @@
 # <signed_number>::? <number>|"-" <number>
 # <expression> ::= <term> (("+" | "-") <term>)*
 # <term> ::= <factor> (("*" | "/") <factor>)*
-# <factor> ::= <var> | <signed_number> | <boolean> | "(" <expression> ")"
+# <factor> ::= <var> | <signed_number> | <boolean> | "(" <expression> ")" | <function_call>
 # <operator>::= "+" | "-" | "*" | "/"
 # <conditional_operator>::= "<" | ">" | "==" | "<=" | ">=" | "!="
 # <logical_operator>::= "&" | "|"
@@ -24,6 +32,9 @@
 
 from .parserNodes import (
     ProgramNode,
+    FunctionDefNode,
+    FunctionCallNode,
+    ReturnNode,
     ScopeNode,
     DefinerNode,
     EqualizeNode,
@@ -45,9 +56,10 @@ class TokenHelper:
         self.tokens = tokens
         self.position = 0
 
-    def peek(self):
-        if self.position < len(self.tokens):
-            return self.tokens[self.position]
+    def peek(self, offset=0):
+        pos = self.position + offset
+        if pos < len(self.tokens):
+            return self.tokens[pos]
         return None
 
     def consume(self, expected_value=None, expected_type=None):
@@ -72,9 +84,74 @@ class Parser:
         self.tokens = TokenHelper(tokens)
 
     def parse_program(self):
-        # <program> ::= <scope>
-        scope = self.parse_scope()
-        return ProgramNode(scope)
+        # <program> ::= (<function_def>)+
+        declarations = []
+        while self.tokens.peek():
+            declarations.append(self.parse_declaration())
+        return ProgramNode(declarations)
+
+    def parse_declaration(self):
+        # <declaration> ::= <definer> | <function_def>
+        if self.tokens.peek() and self.tokens.peek()[1] == "var":
+            return self.parse_definer()
+        else:
+            return self.parse_function_def()
+    def parse_function_def(self):
+        # <function_def> ::= <type> <var> "(" <param_list>? ")" <scope>
+        return_type = self.tokens.consume(expected_type="TYPE")
+        func_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
+        self.tokens.consume("(", "SYMBOL")
+        param_list = self.parse_param_list()
+        self.tokens.consume(")", "SYMBOL")
+        body = self.parse_scope()
+        return FunctionDefNode(return_type, func_name, param_list, body)
+
+    def parse_param_list(self):
+        # <param_list> ::= <param> ("," <param>)*
+        params = []
+        if self.tokens.peek() and self.tokens.peek()[1] != ")":
+            params.append(self.parse_param())
+            while self.tokens.peek() and self.tokens.peek()[1] == ",":
+                self.tokens.consume(",", "SYMBOL")
+                params.append(self.parse_param())
+        return params
+
+    def parse_param(self):
+        # <param> ::= <type> <var>
+        param_type = self.tokens.consume(expected_type="TYPE")[1]
+        param_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
+        return (param_type, param_name)
+
+    def parse_function_call(self):
+        # <function_call> ::= <var> "(" <arg_list>? ")"
+        func_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
+        self.tokens.consume("(", "SYMBOL")
+        arg_list = self.parse_arg_list()
+        self.tokens.consume(")", "SYMBOL")
+        return FunctionCallNode(func_name, arg_list)
+
+    def parse_arg_list(self):
+        # <arg_list> ::= <expression> ("," <expression>)*
+        args = []
+        if self.tokens.peek() and self.tokens.peek()[1] != ")":
+            args.append(self.parse_expression())
+            while self.tokens.peek() and self.tokens.peek()[1] == ",":
+                self.tokens.consume(",", "SYMBOL")
+                args.append(self.parse_expression())
+        return args
+
+    def parse_function_call_stmt(self):
+        # <function_call_stmt> ::= <function_call> ";"
+        func_call = self.parse_function_call()
+        self.tokens.consume(";", "SYMBOL")
+        return func_call
+
+    def parse_return_statement(self):
+        # <return_statement> ::= "return" <expression> ";"
+        self.tokens.consume("return", "KEYWORD")
+        expr = self.parse_expression()
+        self.tokens.consume(";", "SYMBOL")
+        return ReturnNode(expr)
 
     def parse_scope(self):
         # <scope> ::= "{" <statement>+ "}"
@@ -83,10 +160,10 @@ class Parser:
         while self.tokens.peek() and self.tokens.peek()[1] != "}":
             statements.append(self.parse_statement())
         self.tokens.consume("}", "SYMBOL")
-        return ScopeNode(statements)  # Reusing ProgramNode for scope
+        return ScopeNode(statements)
 
     def parse_statement(self):
-        # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure> | <scope>
+        # <statement> ::= <definer> | <equalize> | <if_structure> | <print> | <while_structure> | <scope> | <return_statement> | <function_call_stmt>
         token = self.tokens.peek()
         if token[1] == "var":
             return self.parse_definer()
@@ -98,6 +175,14 @@ class Parser:
             return self.parse_print()
         elif token[1] == "{":
             return self.parse_scope()
+        elif token[1] == "return":
+            return self.parse_return_statement()
+        elif (
+            token[0] == "IDENTIFIER"
+            and self.tokens.peek(1)
+            and self.tokens.peek(1)[1] == "("
+        ):
+            return self.parse_function_call_stmt()
         else:
             return self.parse_equalize()
 
@@ -189,13 +274,19 @@ class Parser:
         return node
 
     def parse_factor(self):
-        # <factor> ::= <var> | <signed_number> | "(" <expression> ")"
+        # <factor> ::= <var> | <signed_number> | <boolean> | "(" <expression> ")" | <function_call>
         token = self.tokens.peek()
         if token[1] == "(":
             self.tokens.consume("(", "SYMBOL")
             node = self.parse_expression()
             self.tokens.consume(")", "SYMBOL")
             return node
+        elif (
+            token[0] == "IDENTIFIER"
+            and self.tokens.peek()
+            and self.tokens.peek(1)[1] == "("
+        ):
+            return self.parse_function_call()
         elif token[0] == "IDENTIFIER":
             var_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
             return FactorNode(var_name, is_variable=True)
@@ -205,6 +296,7 @@ class Parser:
         elif token[0] == "BOOLEAN":
             boolean = self.tokens.consume(expected_type="BOOLEAN")[1]
             return FactorNode(boolean, is_variable=False)
+
         else:
             raise SyntaxError(
                 f"Error, expected '(', 'IDENTIFIER', 'NUMBER', 'SIGNED_NUMBER', or 'BOOLEAN' but found '{token[1]}' at row {token[2]}, column {token[3]}"

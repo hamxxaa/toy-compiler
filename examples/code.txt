@@ -1,20 +1,12 @@
+var int o = 5;
 
-{
-    var bool x = true;
-    print(x);
-    {
-        var bool x = false;
-        print(x);
-        {
-            var bool x = true;
-            print(x);
-            {
-                var bool x = false;
-                print(x);
-            }
-            print(x);
-        }
-        print(x);
-    } 
-    print(x);
+int add(int a, int b){
+    var int c = a + b;
+    return c;
+}
+
+int main(){
+    var int d = 1;
+    var int e = add(d,o);
+    print(e);
 }

@@ -4,9 +4,18 @@ from codegen.TACGenerator import Var, Const, TempVar, TACInstruction, TAC
 
 class X86Backend:
     def __init__(self, TAC):
+        self.TAC = TAC
+        self.functions = TAC.functions
+        self.global_vars = TAC.global_vars
+
         self.data_section = "section .data\n"
         self.bss_section = "section .bss\n"
         self.text_section = "section .text\nglobal _start\n_start:\n"
+        self.exit_code = "\nmov eax, 1\nxor ebx, ebx\nint 0x80\n"
+
+        self.registers = ["eax", "ebx", "ecx", "edx"]
+
+    def get_runtime_code(self):
         try:
             runtime_path = os.path.join(
                 os.path.dirname(__file__), "..", "..", "runtime", "runtime.asm"
@@ -17,35 +26,51 @@ class X86Backend:
             raise RuntimeError(
                 "runtime.asm not found! Cannot include runtime functions."
             )
-        self.exit_code = "\nmov eax, 1\nxor ebx, ebx\nint 0x80\n"
+        
+    def finalize_code(self):
+        runtime_lines = self.runtime_code.split("\n")
+        runtime_text = []
+        runtime_data = []
+        runtime_bss = []
+        current_section = "text"
 
-        self.TAC = TAC
-        self.counter = 0
-        self.registers = ["eax", "ebx", "ecx", "edx"]
-        self.register_descriptors = {reg: None for reg in self.registers}
-        self.address_descriptors = {}
-        self.stack_map = {}
-        self.never_alive_vars = set()
-        for instr in self.TAC.instructions:
-            if isinstance(instr.result, TempVar) or (
-                isinstance(instr.result, Var) and instr.result.storage == "local"
-            ):
-                self.stack_map[instr.result] = None
-        self.stack_map_count = len(self.stack_map)
-        self.live_set_line_count = 0
-        self.liveness_analyzer()
-        max_count, max_local_and_temp_var_set, max_var_size = (
-            self.get_max_alive_temp_and_local_vars()
-        )
-        self.text_section += (
-            f"push ebp\nmov ebp, esp\nsub esp, {max_count*max_var_size}\n"
-        )
-        self.set_local_and_tempvar_addresses(max_count, max_var_size)
+        for line in runtime_lines:
+            line = line.strip()
+            if line.startswith("section .data"):
+                current_section = "data"
+                continue
+            elif line.startswith("section .bss"):
+                current_section = "bss"
+                continue
+            elif line.startswith("section .text"):
+                current_section = "text"
+                continue
 
-    def set_local_and_tempvar_addresses(self, max_count, max_var_size):
+            if current_section == "data":
+                runtime_data.append(line)
+            elif current_section == "bss":
+                runtime_bss.append(line)
+            else:
+                runtime_text.append(line)
+
+        final_data = self.data_section
+        if runtime_data:
+            final_data += "\n".join(runtime_data) + "\n"
+
+        final_bss = self.bss_section
+        if runtime_bss:
+            final_bss += "\n".join(runtime_bss) + "\n"
+
+        final_text = self.text_section + self.exit_code
+        if runtime_text:
+            final_text += "\n".join(runtime_text) + "\n"
+
+        return final_data + final_bss + final_text
+
+    def set_local_and_tempvar_addresses(self, max_count):
         available_slots = []
         for i in range(max_count):
-            available_slots.append(f"[ebp - {i * max_var_size}]")
+            available_slots.append(f"[ebp - {i * 4}]")
         for i in range(self.live_set_line_count):
             for var in self.live[i]:
                 if (var in self.stack_map) and (self.stack_map[var] is None):
@@ -58,12 +83,12 @@ class X86Backend:
             if self.stack_map[var] is None:
                 self.never_alive_vars.add(var)
 
-    def liveness_analyzer(self):
-        self.live = [set() for _ in range(self.TAC.line_count + 1)]
-        instrs = self.TAC.instructions
+    def liveness_analyzer(self, tac):
+        self.live = [set() for _ in range(tac.line_count + 1)]
+        instrs = tac.instructions
         live = set()
         first_use = {}
-        for i in range(self.TAC.line_count, 0, -1):
+        for i in range(tac.line_count, 0, -1):
             defs = set()
             instr = instrs[i - 1]
             if (
@@ -93,18 +118,12 @@ class X86Backend:
     def get_max_alive_temp_and_local_vars(self):
         max_count = 0
         max_set = set()
-        max_var_size = 0
         for live_set in self.live:
             current_count = 0
-            current_var_size = 0
             for var in live_set:
                 if isinstance(var, TempVar) or (
                     isinstance(var, Var) and var.storage == "local"
                 ):
-                    if var.type == "int":
-                        current_var_size = 4
-                    if var.type == "bool":
-                        current_var_size = 1
                     current_count += 1
             if current_count > max_count:
                 max_count = current_count
@@ -114,9 +133,7 @@ class X86Backend:
                     if isinstance(var, (TempVar))
                     or (isinstance(var, Var) and var.storage == "local")
                 )
-            if current_var_size > max_var_size:
-                max_var_size = current_var_size
-        return max_count, max_set, max_var_size
+        return max_count, max_set
 
     def get_type_specifier(self, type):
         if type == "int":
@@ -212,7 +229,43 @@ class X86Backend:
         return operand in self.live[self.counter]
 
     def generate(self):
-        for instr in self.TAC.instructions:
+
+        for instr in self.global_vars:
+            self.handle_global_def(instr)
+
+        self.text_section += "global _start\n_start:\n"
+        self.text_section += "call main\n"
+
+        for tac in self.functions:
+            self.compile_function(tac)
+
+        self.finalize_code()
+
+    def compile_function(self, tac):
+        self.liveness_analyzer(tac)
+        max_count, max_local_and_temp_var_set = self.get_max_alive_temp_and_local_vars()
+        self.stack_size = max_count * 4  # 4-byte slot alignment
+
+        self.stack_map = {}
+        self.never_alive_vars = set()
+        for instr in tac.instructions:
+            if isinstance(instr.result, TempVar) or (
+                isinstance(instr.result, Var) and instr.result.storage == "local"
+            ):
+                self.stack_map[instr.result] = None
+
+        param_offset = 8
+        for instr in tac.instructions:
+            if instr.op == "param":
+                self.stack_map[instr.result] = f"[ebp + {param_offset}]"
+                param_offset += 4
+
+        self.set_local_and_tempvar_addresses(max_count, 4)
+        self.register_descriptors = {reg: None for reg in self.registers}
+        self.address_descriptors = {}
+        self.counter = 0
+
+        for instr in tac.instructions:
             if instr.op == "def":
                 self.handle_def(instr)
             elif instr.op == "eq":
@@ -229,46 +282,19 @@ class X86Backend:
                 self.handle_label(instr)
             elif instr.op == "print":
                 self.handle_print(instr)
+            elif instr.op == "ret":
+                pass  # Handled in function generation
+            elif instr.op == "func_start":
+                pass  # Handled in function generation
+            elif instr.op == "func_end":
+                pass  # Handled in function generation
+            elif instr.op == "arg":
+                pass  # Handled in function call generation
+            elif instr.op == "call":
+                pass  # Handled in function call generation
+            elif instr.op == "param":
+                pass  # Handled in function generation
             self.counter += 1
-
-        runtime_lines = self.runtime_code.split("\n")
-        runtime_text = []
-        runtime_data = []
-        runtime_bss = []
-        current_section = "text"
-
-        for line in runtime_lines:
-            line = line.strip()
-            if line.startswith("section .data"):
-                current_section = "data"
-                continue
-            elif line.startswith("section .bss"):
-                current_section = "bss"
-                continue
-            elif line.startswith("section .text"):
-                current_section = "text"
-                continue
-
-            if current_section == "data":
-                runtime_data.append(line)
-            elif current_section == "bss":
-                runtime_bss.append(line)
-            else:
-                runtime_text.append(line)
-
-        final_data = self.data_section
-        if runtime_data:
-            final_data += "\n".join(runtime_data) + "\n"
-
-        final_bss = self.bss_section
-        if runtime_bss:
-            final_bss += "\n".join(runtime_bss) + "\n"
-
-        final_text = self.text_section + self.exit_code
-        if runtime_text:
-            final_text += "\n".join(runtime_text) + "\n"
-
-        return final_data + final_bss + final_text
 
     def handle_def(self, instr):
         ts, ss = self.get_type_specifier(instr.result.type)
@@ -282,6 +308,13 @@ class X86Backend:
                 location = self.get_var_location(instr.result)
                 self.text_section += f"mov {ss} {location}, {instr.arg1.value}\n"
                 self.address_descriptors[instr.result] = location
+
+    def handle_global_def(self, instr):
+        ts, ss = self.get_type_specifier(instr.result.type)
+        if instr.arg1 is not None:
+            self.data_section += f"{instr.result.name} {ts} {instr.arg1.value}\n"
+        else:
+            self.data_section += f"{instr.result.name} {ts} 0\n"
 
     def handle_eq(self, instr):
         ts, ss = self.get_type_specifier(instr.result.type)
@@ -441,7 +474,10 @@ class X86Backend:
             if not alive[reg]:
                 if self.register_descriptors[reg]:
                     var_to_clear = self.register_descriptors[reg]
-                    if var_to_clear in self.address_descriptors and self.address_descriptors[var_to_clear] == reg:
+                    if (
+                        var_to_clear in self.address_descriptors
+                        and self.address_descriptors[var_to_clear] == reg
+                    ):
                         del self.address_descriptors[var_to_clear]
                 self.register_descriptors[reg] = None
 
@@ -521,3 +557,44 @@ class X86Backend:
                 self.text_section += "pop edx\n"
             if eax_pushed:
                 self.text_section += "pop eax\n"
+
+    def handle_function_start(self, instr):
+        self.text_section += f"{instr.result}:\n"
+        self.text_section += "push ebp\nmov ebp, esp\n"
+        self.text_section += f"sub esp, {self.stack_size}\n"
+
+    def handle_function_end(self, instr):
+        self.text_section += "mov esp, ebp\npop ebp\nret\n"
+
+    def handle_arg(self, instr):
+        self.text_section += f"push {self.get_register(instr.arg1)}\n"
+
+    def handle_call(self, instr):
+        self.sync_global_vars()
+        self.text_section += f"call {instr.result}\n"
+        if instr.arg1 is not None:
+            self.text_section += f"add esp, {instr.arg1 * 4}\n"
+
+    def handle_ret(self, instr):
+        if instr.arg1 is not None:
+            ret_reg = self.get_register(instr.arg1)
+            if ret_reg != "eax":
+                if (
+                    self.register_descriptors["eax"]
+                    and self.register_descriptors["eax"].storage == "global"
+                ):
+                    self.text_section += f"mov {self.get_var_location(self.register_descriptors['eax'])}, eax\n"
+                self.text_section += f"mov eax, {ret_reg}\n"
+
+    def sync_global_vars(self):
+        for reg in self.registers:
+            if (
+                self.register_descriptors[reg]
+                and self.register_descriptors[reg].storage == "global"
+            ):
+                operand = self.register_descriptors[reg]
+                ts, ss = self.get_type_specifier(operand.type)
+                reg_part = self.get_register_part(reg, ss)
+                address = self.get_var_location(operand)
+                self.text_section += f"mov {ss} {address}, {reg_part}\n"
+                self.address_descriptors[operand] = address

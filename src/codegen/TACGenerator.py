@@ -1,3 +1,6 @@
+from src.parser.parserNodes import FunctionDefNode
+
+
 class TACInstruction:
     def __init__(self, op, arg1=None, arg2=None, result=None):
         self.op = op
@@ -39,6 +42,7 @@ class TempVar(Operand):
     def __hash__(self):
         return hash((self.name, self.type))
 
+
 class Var(Operand):
     def __init__(self, name, type, storage="global", scope_id=0):
         self.name = name
@@ -63,6 +67,7 @@ class Var(Operand):
     def __hash__(self):
         return hash((self.name, self.type, self.storage, self.scope_id))
 
+
 class Const(Operand):
     def __init__(self, value, type):
         self.value = value
@@ -86,6 +91,8 @@ class TAC:
     def __init__(self, instructions):
         self.instructions = instructions
         self.line_count = len(instructions)
+        self.functions = {}
+        self.global_vars = []
 
 
 class TACGenerator:
@@ -96,6 +103,7 @@ class TACGenerator:
 
     def generate_tac(self, ast):
         self.generate(ast)
+        self.split_tac_into_functions(TAC(self.instructions))
         return TAC(self.instructions)
 
     def new_temp(self, type):
@@ -118,11 +126,81 @@ class TACGenerator:
         visitor = getattr(self, method_name, self.generic_visit)
         return visitor(node)
 
+    def split_tac_into_functions(self, tac):
+        functions = {}
+        current_function = None
+        current_instructions = []
+        global_vars = []
+
+        for instr in tac.instructions:
+            if instr.op == "func_start":
+                if current_function is not None:
+                    functions[current_function] = TAC(current_instructions)
+                    current_instructions = []
+                current_function = instr.result
+            elif instr.op == "func_end":
+                if current_function is not None:
+                    functions[current_function] = TAC(current_instructions)
+                    current_function = None
+                    current_instructions = []
+            elif instr.op == "def" and instr.result.storage == "global":
+                global_vars.append(instr)
+            else:
+                if current_function is not None:
+                    current_instructions.append(instr)
+
+        tac.functions = functions
+        tac.global_vars = global_vars
+
     def generic_visit(self, node):
         raise Exception(f"No visit_{type(node).__name__} method")
 
     def visit_ProgramNode(self, node):
-        self.generate(node.scope)
+        main_func = None
+        other_funcs = []
+        for decl in node.declarations:
+            if isinstance(decl, FunctionDefNode):
+                if decl.name == "main":
+                    main_func = decl
+                else:
+                    other_funcs.append(decl)
+            else:
+                self.generate(decl)
+        for func in other_funcs:
+            self.generate(func)
+        if main_func:
+            self.generate(main_func)
+        else:
+            raise Exception("No 'main' function defined.")
+
+    def visit_FunctionDefNode(self, node):
+        self.create_instruction("func_start", result=node.name)
+        for param in node.params:
+            self.create_instruction(
+                "param",
+                result=Var(
+                    param.name,
+                    type=param.type,
+                    storage="param",
+                    scope_id=param.scope_id,
+                ),
+            )
+        self.generate(node.body)
+        self.create_instruction("func_end", result=node.name)
+
+    def visit_FunctionCallNode(self, node):
+        for arg in reversed(node.args):
+            arg_result = self.generate(arg)
+            self.create_instruction("arg", result=arg_result)
+        temp = self.new_temp(type=node.type)
+        self.create_instruction(
+            "call", arg1=node.name, arg2=len(node.args), result=temp
+        )
+        return temp
+
+    def visit_ReturnNode(self, node):
+        result = self.generate(node.expression)
+        self.create_instruction("ret", arg1=result)
 
     def visit_ScopeNode(self, node):
         for statement in node.statements:
@@ -132,24 +210,54 @@ class TACGenerator:
         value = self.generate(node.value) if node.value else None
         if isinstance(value, Const):
             self.create_instruction(
-                "def", arg1=value, result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
+                "def",
+                arg1=value,
+                result=Var(
+                    node.name,
+                    type=node.type,
+                    storage=node.storage,
+                    scope_id=node.scope_id,
+                ),
             )
         elif value is not None:
             self.create_instruction(
-                "def", result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
+                "def",
+                result=Var(
+                    node.name,
+                    type=node.type,
+                    storage=node.storage,
+                    scope_id=node.scope_id,
+                ),
             )
             self.create_instruction(
-                "eq", arg1=value, result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
+                "eq",
+                arg1=value,
+                result=Var(
+                    node.name,
+                    type=node.type,
+                    storage=node.storage,
+                    scope_id=node.scope_id,
+                ),
             )
         else:
             self.create_instruction(
-                "def", result=Var(node.name, type=node.type, storage=node.storage, scope_id=node.scope_id)
+                "def",
+                result=Var(
+                    node.name,
+                    type=node.type,
+                    storage=node.storage,
+                    scope_id=node.scope_id,
+                ),
             )
 
     def visit_EqualizeNode(self, node):
         value = self.generate(node.value)
         self.create_instruction(
-            "eq", arg1=value, result=Var(node.name, type=value.type, storage=node.storage, scope_id=node.scope_id)
+            "eq",
+            arg1=value,
+            result=Var(
+                node.name, type=value.type, storage=node.storage, scope_id=node.scope_id
+            ),
         )
 
     def visit_IfNode(self, node):
@@ -202,9 +310,10 @@ class TACGenerator:
 
     def visit_FactorNode(self, node):
         if node.is_variable:
-            return Var(node.value, type=node.type, storage=node.storage, scope_id=node.scope_id)
+            return Var(
+                node.value, type=node.type, storage=node.storage, scope_id=node.scope_id
+            )
         else:
-            # Handle boolean and integer constants properly
             if node.type == "bool":
                 if node.value.lower() == "true":
                     value = 1
