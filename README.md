@@ -1,6 +1,6 @@
 # Toy Compiler
 
-A simple compiler built from the ground up as a learning exercise in compiler theory and design. It translates a small, C-like toy language into 32-bit x86 assembly (nasm) for both Linux and Windows.
+A simple compiler built from the ground up as a learning exercise in compiler theory and design. It translates a small, C-like toy language into 32-bit x86 assembly (NASM) for both Linux and Windows.
 
 The primary goal of this project is to implement each stage of the compiler pipeline manually to gain a deeper understanding of the underlying concepts. This includes writing core components from scratch, such as the regex engine and code generator, without relying on standard libraries or tools like `re`, `yacc`, or `LLVM`.
 
@@ -10,12 +10,34 @@ The language is minimal but supports core procedural constructs:
 
   * **Types:** `int` and `bool`.
   * **Variables:** Declaration (`var int a;`) and initialization (`var int b = 10;`).
+  * **Scoping:** Block-level scoping with nested scopes (`{ ... }`).
   * **Operators:** Arithmetic (`+`, `-`, `*`, `/`), relational (`<`, `>`, `==`, `!=`, `<=`, `>=`), and logical (`&`, `|`).
   * **Control Flow:** `if (condition) do ( ... )` and `while (condition) do ( ... )` statements.
-  * **I/O:** A built-in `print(...)` function.
+  * **I/O:** A built-in `print(...)` function that can print expressions.
 
 ### Example Code
 
+**Scoped Variables Example:**
+```
+{
+    var bool x = true;
+    print(x);
+    {
+        var bool x = false;
+        print(x);
+        {
+            var bool x = true;
+            print(x);
+        }
+        print(x);
+    } 
+    print(x);
+}
+```
+
+*See [examples/code.txt](examples/code.txt) for more examples.*
+
+**Simple Arithmetic Example:**
 ```
 var int a = 10;
 var int b = 20;
@@ -24,8 +46,6 @@ var int result;
 result = a + b * c;
 print(result);
 ```
-
-*([examples/code.txt](https://www.google.com/search?q=hamxxaa/toy-compiler/toy-compiler-1ff4ec6a9e22db9219040255ca367cdefebe19bd/examples/code.txt))*
 
 ## Architecture & Pipeline
 
@@ -44,7 +64,8 @@ The compiler is built in stages, processing the source code in a classic pipelin
 3.  **Analyzer (`src/analyzer`):**
 
       * A **Semantic Analyzer** that traverses the AST using a visitor pattern.
-      * Manages a **Symbol Table** to perform type checking and detect undefined variables.
+      * Manages a **Symbol Table** with **hierarchical scoping support** to perform type checking and detect undefined variables.
+      * Handles nested scopes and variable shadowing correctly.
 
 4.  **IR Generation (`src/codegen`):**
 
@@ -53,12 +74,15 @@ The compiler is built in stages, processing the source code in a classic pipelin
 5.  **Optimization (`src/optimization`):**
 
       * An **Optimizer** that performs basic optimization passes on the TAC, such as *Constant Folding* and *Constant Propagation*.
+      * Includes **integer overflow handling** with automatic 32-bit wrapping to match x86 runtime behavior.
+      * Block-based optimization for improved efficiency.
 
 6.  **Backend (`src/backend`):**
 
       * A hand-written **x86 (32-bit) Code Generator**.
       * This stage performs **Liveness Analysis** on the TAC to inform its **Greedy Register Allocator** before generating the final NASM-compatible assembly code.
-      * Includes a small, necessary runtime (`runtime/runtime.asm`) for functions like `print_integer`.
+      * **Cross-platform support**: Automatically detects the operating system (Linux, Windows) and generates appropriate assembly format and linking commands.
+      * Includes a small, necessary runtime (`runtime/runtime.asm`) for built-in functions like `print_integer`.
 
 ## Usage
 
@@ -82,22 +106,75 @@ The compiler will automatically assemble, link, and execute the code, placing bu
 
 ## Options
 
-The `main.py` script accepts several flags, primarily for debugging the compiler's internal stages:
+The `main.py` script accepts several command-line flags for customizing the build and debugging the compiler's internal stages:
 
-  * `-o, --output`: Specify the output executable name (default: `program`).
-  * `--no-optimize`: Disables the optimization pass.
-  * `--print-tokens`: Prints the token stream from the Lexer.
-  * `--print-ast`: Prints a simple indented view of the AST.
-  * `--print-tac`: Prints the un-optimized Three-Address Code.
-  * `--print-optimized-tac`: Prints the optimized Three-Address Code.
-  * `--save-asm`: Saves the generated assembly file (e.g., `temp.asm`) in the `build/objects` directory.
+**Output Control:**
+  * `-o, --output <name>`: Specify the output executable name (default: `program`).
+  * `--save-asm <filename>`: Save the generated assembly file with the specified name in the `build/objects/` directory.
+
+**Optimization:**
+  * `--no-optimize`: Disables the optimization pass (constant folding and propagation).
+
+**Debugging & Inspection:**
+  * `--print-tokens`: Prints the token stream produced by the Lexer.
+  * `--print-ast`: Prints a simple indented view of the Abstract Syntax Tree.
+  * `--print-tac`: Prints the unoptimized Three-Address Code (TAC).
+  * `--print-optimized-tac`: Prints the optimized Three-Address Code after optimization passes.
+
+**Example:**
+```bash
+python3 main.py examples/code.txt -o myprogram --print-tac --save-asm output.asm
+```
 
 ## Requirements
 
 To build and run the code generated by this compiler, you will need:
 
-  * Python 3.x
-  * **NASM** (The Netwide Assembler)
-  * A 32-bit system linker:
-      * **Linux:** `ld` (usually part of `build-essential` or `binutils`)
-      * **Windows:** `link.exe` (part of Visual Studio Build Tools)
+  * **Python 3.x** (Python 3.7 or higher recommended)
+  * **NASM** (The Netwide Assembler) - version 2.x or higher
+  * A **32-bit system linker**:
+      * **Linux/macOS:** `ld` (usually part of `build-essential` or `binutils` package)
+      * **Windows:** `link.exe` (part of Visual Studio Build Tools or Windows SDK)
+
+**Platform Support:**
+  * Linux (ELF32 format)
+  * Windows (Win32 format)
+
+## Key Features
+
+1. **Block-Level Scoping**
+   - Nested scope support with proper variable shadowing
+   - Variables in inner scopes can shadow outer scope variables
+   - Hierarchical symbol table implementation
+   - Correct scope resolution during semantic analysis
+
+2. **Boolean Type Support**
+   - Full `bool` type with `true` and `false` literals
+   - Type checking for boolean expressions
+   - Support for logical operators (`&`, `|`)
+   - Boolean variables and conditions
+
+3. **Cross-Platform Compilation**
+   - Automatic OS detection (Linux, Windows)
+   - Platform-specific assembly format generation (ELF32 vs Win32)
+   - Appropriate linker command selection
+   - Consistent behavior across platforms
+
+4. **Robust Optimizer**
+   - Block-based constant folding and propagation
+   - Integer overflow handling with 32-bit wrapping (matches x86 behavior)
+   - Runtime warnings for overflow conditions
+   - Multiple optimization passes until convergence
+
+5. **Advanced Code Generation**
+   - Liveness analysis for efficient register allocation
+   - Greedy register allocator (4 registers: eax, ebx, ecx, edx)
+   - Support for nested expressions and complex control flow
+   - Proper handling of scoped variables
+
+### 📦 Build System
+
+  * Automatic directory structure creation (`build/objects/`, `build/executables/`)
+  * Optional assembly file preservation for debugging
+  * Automatic cleanup of temporary files
+  * Comprehensive error handling and reporting
