@@ -13,11 +13,11 @@ __version__ = "1.0.0"
 __author__ = "Toy Compiler Team"
 
 from .compiler import compile_program
-from lexer import Tokenizer
-from parser import Parser
-from codegen import TACGenerator
-from optimization import Optimizer
-from backend import X86Backend
+from src.lexer.Tokenizer import Tokenizer
+from src.parser.Parser import Parser
+from src.codegen.TACGenerator import TACGenerator
+from src.optimization.Optimizer import Optimizer
+from src.backend.X86Backend import X86Backend
 
 __all__ = [
     'compile_program',

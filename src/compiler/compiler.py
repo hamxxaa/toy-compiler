@@ -3,12 +3,12 @@ import argparse
 import sys
 import platform
 import os
-from lexer import Tokenizer
-from parser import Parser
-from codegen import TAC, TACGenerator
-from optimization import Optimizer
-from backend import X86Backend
-from analyzer import SemanticAnalyzer
+from src.lexer.Tokenizer import Tokenizer
+from src.parser.Parser import Parser
+from src.codegen.TACGenerator import TAC, TACGenerator
+from src.optimization.Optimizer import Optimizer
+from src.backend.X86Backend import X86Backend
+from src.analyzer.SemanticAnalyzer import SemanticAnalyzer
 
 
 def create_tokenizer():
@@ -90,12 +90,12 @@ def compile_program(
         for token in tokens:
             print(token)
     ast = parser.parse_program()
+    if print_ast:
+        parser.print_ast(ast)
     sa = SemanticAnalyzer()
     sa.analyze(ast)
     tacg = TACGenerator()
     tac = tacg.generate_tac(ast)
-    if print_ast:
-        parser.print_ast(ast)
     if print_tac:
         for instr in tac.instructions:
             print(instr)

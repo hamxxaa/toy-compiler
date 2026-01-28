@@ -179,7 +179,7 @@ class TACGenerator:
             self.create_instruction(
                 "param",
                 result=Var(
-                    param.name,
+                    param.value,
                     type=param.type,
                     storage="param",
                     scope_id=param.scope_id,

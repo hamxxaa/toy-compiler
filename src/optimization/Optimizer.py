@@ -1,4 +1,4 @@
-from codegen.TACGenerator import *
+from src.codegen.TACGenerator import *
 import warnings
 
 

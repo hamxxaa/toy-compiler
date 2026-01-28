@@ -80,10 +80,10 @@ class TermNode:
 
 
 class FactorNode:
-    def __init__(self, value, is_variable):
+    def __init__(self, value, is_variable, type=None):
         self.value = value
         self.is_variable = is_variable
-        self.type = None
+        self.type = type
         self.storage = None
         self.scope_id = None
 

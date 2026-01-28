@@ -1,5 +1,5 @@
 import os
-from codegen.TACGenerator import Var, Const, TempVar, TACInstruction, TAC
+from src.codegen.TACGenerator import Var, Const, TempVar, TACInstruction, TAC
 
 
 class X86Backend:
@@ -28,6 +28,7 @@ class X86Backend:
             )
         
     def finalize_code(self):
+        self.get_runtime_code()
         runtime_lines = self.runtime_code.split("\n")
         runtime_text = []
         runtime_data = []
@@ -52,6 +53,8 @@ class X86Backend:
                 runtime_bss.append(line)
             else:
                 runtime_text.append(line)
+        print(self.text_section)
+        print("----------------------------------------------------------------")
 
         final_data = self.data_section
         if runtime_data:
@@ -64,6 +67,10 @@ class X86Backend:
         final_text = self.text_section + self.exit_code
         if runtime_text:
             final_text += "\n".join(runtime_text) + "\n"
+
+
+        print("Final x86 Assembly Code Generated:")
+        print(final_data + final_bss + final_text)
 
         return final_data + final_bss + final_text
 
@@ -229,7 +236,6 @@ class X86Backend:
         return operand in self.live[self.counter]
 
     def generate(self):
-
         for instr in self.global_vars:
             self.handle_global_def(instr)
 
@@ -237,9 +243,10 @@ class X86Backend:
         self.text_section += "call main\n"
 
         for tac in self.functions:
+            print("66666666666666666666666666666666666666666668666666666666")
             self.compile_function(tac)
 
-        self.finalize_code()
+        return self.finalize_code()
 
     def compile_function(self, tac):
         self.liveness_analyzer(tac)

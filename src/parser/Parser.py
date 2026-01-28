@@ -88,6 +88,7 @@ class Parser:
         declarations = []
         while self.tokens.peek():
             declarations.append(self.parse_declaration())
+        print(declarations)
         return ProgramNode(declarations)
 
     def parse_declaration(self):
@@ -95,7 +96,9 @@ class Parser:
         if self.tokens.peek() and self.tokens.peek()[1] == "var":
             return self.parse_definer()
         else:
+            print("Parsing function definition")
             return self.parse_function_def()
+        
     def parse_function_def(self):
         # <function_def> ::= <type> <var> "(" <param_list>? ")" <scope>
         return_type = self.tokens.consume(expected_type="TYPE")
@@ -120,7 +123,7 @@ class Parser:
         # <param> ::= <type> <var>
         param_type = self.tokens.consume(expected_type="TYPE")[1]
         param_name = self.tokens.consume(expected_type="IDENTIFIER")[1]
-        return (param_type, param_name)
+        return FactorNode(param_name, True, param_type)
 
     def parse_function_call(self):
         # <function_call> ::= <var> "(" <arg_list>? ")"
@@ -307,9 +310,29 @@ class Parser:
 
         if isinstance(node, ProgramNode):
             print(f"{prefix}Program:")
-            self.print_ast(node.scope, indent + 1)
+            for decl in node.declarations:
+                self.print_ast(decl, indent + 1)
 
-        if isinstance(node, ScopeNode):
+        elif isinstance(node, FunctionDefNode):
+            ret_type = node.return_type if isinstance(node.return_type, str) else node.return_type[1] if node.return_type else None
+            print(f"{prefix}FunctionDef: {ret_type} {node.name}(")
+            for i, param in enumerate(node.params):
+                print(f"{prefix}  Param {i}: {param.type} {param.value}")
+            print(f"{prefix}) Body:")
+            self.print_ast(node.body, indent + 1)
+
+        elif isinstance(node, FunctionCallNode):
+            print(f"{prefix}FunctionCall: {node.name}(")
+            for i, arg in enumerate(node.args):
+                print(f"{prefix}  Arg {i}:")
+                self.print_ast(arg, indent + 2)
+            print(f"{prefix})")
+
+        elif isinstance(node, ReturnNode):
+            print(f"{prefix}Return:")
+            self.print_ast(node.expression, indent + 1)
+
+        elif isinstance(node, ScopeNode):
             print(f"{prefix}Scope:")
             for stmt in node.statements:
                 self.print_ast(stmt, indent + 1)

@@ -1,4 +1,4 @@
-from src.parser.parserNodes import FunctionDefNode
+import src.parser.parserNodes as parserNodes
 
 
 class Symbol:
@@ -102,9 +102,8 @@ class SemanticAnalyzer:
         raise Exception(f"No visit_{type(node).__name__} method")
 
     def visit_ProgramNode(self, node):
-            
         for decl in node.declarations:
-            if isinstance(decl, FunctionDefNode):
+            if isinstance(decl, parserNodes.FunctionDefNode):
                 self.global_scope.define_function(decl.name, decl.return_type[1], decl.params)
         for decl in node.declarations:
                 self.visit(decl)
@@ -113,8 +112,9 @@ class SemanticAnalyzer:
         self.current_function = node
         parent_scope = self.current_scope
         self.current_scope = SymbolTable(parent=parent_scope)
-        for param_type, param_name in node.params:
-            self.current_scope.define_variable(param_name, param_type[1])
+        for param in node.params:
+            # param_type is already a string (e.g., 'int' or 'bool')
+            self.current_scope.define_variable(param.value, param.type)
         self.visit(node.body)
         self.current_scope = parent_scope
         self.current_function = None
@@ -127,11 +127,12 @@ class SemanticAnalyzer:
             raise Exception(
                 f"Semantic Error: Function '{node.name}' expects {len(function_symbol.params)} arguments, got {len(node.args)}."
             )
-        for arg_node, (param_type, param_name) in zip(node.args, function_symbol.params):
+        for arg_node, param in zip(node.args, function_symbol.params):
             arg_type = self.visit(arg_node)
-            if arg_type != param_type[1]:
+            # param_type is a string
+            if arg_type != param.type:
                 raise Exception(
-                    f"Type Error: Argument for parameter '{param_name}' expects type '{param_type[1]}', got '{arg_type}'."
+                    f"Type Error: Argument for parameter '{param.value}' expects type '{param.type}', got '{arg_type}'."
                 )
         node.type = function_symbol.return_type
         return function_symbol.return_type
@@ -166,12 +167,13 @@ class SemanticAnalyzer:
                 )
 
     def visit_EqualizeNode(self, node):
-        var_type, storage, scope_id = self.current_scope.lookup_variable(node.name)
+        symbol, storage, scope_id = self.current_scope.lookup_variable(node.name)
         node.storage = storage
         node.scope_id = scope_id
-        if var_type is None:
+        if symbol is None:
             raise Exception(f"Semantic Error: Variable '{node.name}' not defined.")
         value_type = self.visit(node.value)
+        var_type = symbol.var_type
         if value_type != var_type:
             raise Exception(
                 f"Type Error: Cannot assign value of type '{value_type}' to variable '{node.name}' of type '{var_type}'."
@@ -237,9 +239,10 @@ class SemanticAnalyzer:
 
     def visit_FactorNode(self, node):
         if node.is_variable:
-            var_type, storage, scope_id = self.current_scope.lookup_variable(node.value)
-            if var_type is None:
+            symbol, storage, scope_id = self.current_scope.lookup_variable(node.value)
+            if symbol is None:
                 raise Exception(f"Semantic Error: Variable '{node.value}' not defined.")
+            var_type = symbol.var_type
             node.type = var_type
             node.storage = storage
             node.scope_id = scope_id

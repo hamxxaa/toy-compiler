@@ -15,6 +15,6 @@ else
     exit 1
 fi
 
-# Run compiler from project root
+# Run compiler from project root using package entry to ensure consistent imports
 cd "${PROJECT_ROOT}"
-"${PYTHON_CMD}" main.py "$@"
+"${PYTHON_CMD}" -m src.compiler.compiler "$@"
